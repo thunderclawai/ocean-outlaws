@@ -1,9 +1,10 @@
-// hud.js — speed indicator and compass overlay
+// hud.js — speed indicator, compass, and ammo counter overlay
 
 var container = null;
 var speedBar = null;
 var speedLabel = null;
 var compassLabel = null;
+var ammoLabel = null;
 
 export function createHUD() {
   container = document.createElement("div");
@@ -55,10 +56,18 @@ export function createHUD() {
   compassLabel.style.color = "#667788";
   container.appendChild(compassLabel);
 
+  // ammo counter
+  ammoLabel = document.createElement("div");
+  ammoLabel.textContent = "AMMO: --";
+  ammoLabel.style.marginTop = "8px";
+  ammoLabel.style.fontSize = "13px";
+  ammoLabel.style.color = "#8899aa";
+  container.appendChild(ammoLabel);
+
   document.body.appendChild(container);
 }
 
-export function updateHUD(speedRatio, displaySpeed, heading) {
+export function updateHUD(speedRatio, displaySpeed, heading, ammo, maxAmmo) {
   if (!container) return;
 
   var pct = Math.min(1, speedRatio) * 100;
@@ -70,4 +79,10 @@ export function updateHUD(speedRatio, displaySpeed, heading) {
   var dirs = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"];
   var idx = Math.round(deg / 45) % 8;
   compassLabel.textContent = dirs[idx] + " " + Math.round(deg) + "\u00B0";
+
+  // ammo counter
+  if (ammo !== undefined) {
+    ammoLabel.textContent = "AMMO: " + ammo + " / " + maxAmmo;
+    ammoLabel.style.color = ammo <= 5 ? "#cc6644" : "#8899aa";
+  }
 }

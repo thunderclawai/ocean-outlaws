@@ -74,3 +74,24 @@ export function createOcean() {
 export function updateOcean(uniforms, elapsed) {
   uniforms.uTime.value = elapsed;
 }
+
+// mirror the vertex shader wave function on the CPU
+// the plane is rotated -PI/2 around X, so shader pos.x = worldX, shader pos.y = worldZ
+export function getWaveHeight(worldX, worldZ, time) {
+  var x = worldX;
+  var y = worldZ;
+  var h = 0;
+
+  // layer 1 — broad swells
+  h += Math.sin(x * 0.3 + time * 0.8) * 1.2;
+  h += Math.sin(y * 0.2 + time * 0.6) * 1.0;
+
+  // layer 2 — medium chop
+  h += Math.sin(x * 0.8 + y * 0.6 + time * 1.4) * 0.5;
+
+  // layer 3 — small ripples
+  h += Math.sin(x * 2.0 + time * 2.0) * 0.15;
+  h += Math.sin(y * 2.5 + time * 1.8) * 0.12;
+
+  return h;
+}
