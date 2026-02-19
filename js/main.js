@@ -1,6 +1,9 @@
 import * as THREE from "three";
 import { createOcean, updateOcean } from "./ocean.js";
 import { createCamera, updateCamera, resizeCamera } from "./camera.js";
+import { createShip, updateShip, getSpeedRatio, getDisplaySpeed } from "./ship.js";
+import { initInput, getInput } from "./input.js";
+import { createHUD, updateHUD } from "./hud.js";
 
 // --- renderer ---
 var renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -29,6 +32,16 @@ scene.add(hemi);
 var ocean = createOcean();
 scene.add(ocean.mesh);
 
+// --- ship ---
+var ship = createShip();
+scene.add(ship.mesh);
+
+// --- input ---
+initInput();
+
+// --- HUD ---
+createHUD();
+
 // --- camera ---
 var cam = createCamera(window.innerWidth / window.innerHeight);
 
@@ -46,8 +59,14 @@ function animate() {
   var dt = clock.getDelta();
   var elapsed = clock.getElapsedTime();
 
+  // cap dt to avoid physics blowup on tab switch
+  if (dt > 0.1) dt = 0.1;
+
+  var input = getInput();
+  updateShip(ship, input, dt);
   updateOcean(ocean.uniforms, elapsed);
-  updateCamera(cam, dt);
+  updateCamera(cam, dt, ship.posX, ship.posZ);
+  updateHUD(getSpeedRatio(ship), getDisplaySpeed(ship), ship.heading);
 
   renderer.render(scene, cam.camera);
 }
