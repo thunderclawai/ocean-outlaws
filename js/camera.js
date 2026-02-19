@@ -3,7 +3,6 @@ import * as THREE from "three";
 var ZOOM_MIN = 20;
 var ZOOM_MAX = 120;
 var ZOOM_SPEED = 4;
-var PAN_SPEED = 60;
 var LERP_FACTOR = 0.05;
 var PITCH_ANGLE = (60 * Math.PI) / 180; // 60 degrees from horizontal
 
@@ -13,24 +12,14 @@ export function createCamera(aspect) {
   var state = {
     camera: camera,
     target: new THREE.Vector3(0, 0, 0),   // point the camera looks at
-    distance: 60,                           // current zoom distance
-    keys: { up: false, down: false, left: false, right: false }
+    distance: 60                           // current zoom distance
   };
 
   positionCamera(state);
 
-  window.addEventListener("keydown", function (e) { onKey(state, e.code, true); });
-  window.addEventListener("keyup", function (e) { onKey(state, e.code, false); });
   window.addEventListener("wheel", function (e) { onWheel(state, e); }, { passive: false });
 
   return state;
-}
-
-function onKey(state, code, down) {
-  if (code === "ArrowUp"    || code === "KeyW") state.keys.up    = down;
-  if (code === "ArrowDown"  || code === "KeyS") state.keys.down  = down;
-  if (code === "ArrowLeft"  || code === "KeyA") state.keys.left  = down;
-  if (code === "ArrowRight" || code === "KeyD") state.keys.right = down;
 }
 
 function onWheel(state, e) {
@@ -52,13 +41,10 @@ function positionCamera(state) {
   state.camera.lookAt(state.target);
 }
 
-export function updateCamera(state, dt) {
-  // pan from keyboard input
-  var move = PAN_SPEED * dt;
-  if (state.keys.up)    state.target.z -= move;
-  if (state.keys.down)  state.target.z += move;
-  if (state.keys.left)  state.target.x -= move;
-  if (state.keys.right) state.target.x += move;
+export function updateCamera(state, dt, followX, followZ) {
+  // follow the ship position
+  state.target.x += (followX - state.target.x) * LERP_FACTOR;
+  state.target.z += (followZ - state.target.z) * LERP_FACTOR;
 
   // smooth interpolation toward desired position
   var height = Math.sin(PITCH_ANGLE) * state.distance;
