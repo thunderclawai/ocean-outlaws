@@ -1,9 +1,12 @@
 import * as THREE from "three";
-import { createOcean, updateOcean } from "./ocean.js";
+import { createOcean, updateOcean, getWaveHeight } from "./ocean.js";
 import { createCamera, updateCamera, resizeCamera } from "./camera.js";
 import { createShip, updateShip, getSpeedRatio, getDisplaySpeed } from "./ship.js";
-import { initInput, getInput } from "./input.js";
+import { initInput, getInput, getMouse, consumeFire } from "./input.js";
 import { createHUD, updateHUD } from "./hud.js";
+import { initNav, updateNav } from "./nav.js";
+import { createTurretSystem, aimTurrets, fire, updateTurrets, screenToWorld } from "./turret.js";
+import { createEnemies } from "./enemy.js";
 
 // --- renderer ---
 var renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -36,14 +39,26 @@ scene.add(ocean.mesh);
 var ship = createShip();
 scene.add(ship.mesh);
 
+// --- enemies ---
+var enemies = createEnemies(5);
+for (var i = 0; i < enemies.length; i++) {
+  scene.add(enemies[i].mesh);
+}
+
 // --- input ---
 initInput();
+
+// --- turret system ---
+var turrets = createTurretSystem(ship);
 
 // --- HUD ---
 createHUD();
 
 // --- camera ---
 var cam = createCamera(window.innerWidth / window.innerHeight);
+
+// --- click/tap-to-move navigation ---
+initNav(cam.camera, ship, scene);
 
 // --- resize ---
 window.addEventListener("resize", function () {
@@ -63,10 +78,32 @@ function animate() {
   if (dt > 0.1) dt = 0.1;
 
   var input = getInput();
-  updateShip(ship, input, dt);
+  var mouse = getMouse();
+
+  updateShip(ship, input, dt, getWaveHeight, elapsed);
   updateOcean(ocean.uniforms, elapsed);
+  updateNav(ship, elapsed);
   updateCamera(cam, dt, ship.posX, ship.posZ);
-  updateHUD(getSpeedRatio(ship), getDisplaySpeed(ship), ship.heading);
+
+  // aim turrets toward mouse/touch position projected onto water plane
+  var aimTarget = screenToWorld(mouse.x, mouse.y, cam.camera);
+  if (aimTarget) {
+    aimTurrets(turrets, aimTarget);
+  }
+
+  // fire on click/tap
+  if (mouse.firePressed && !mouse.fireConsumed) {
+    fire(turrets, scene);
+    consumeFire();
+  }
+
+  // update projectiles, effects, hit detection
+  updateTurrets(turrets, dt, scene, enemies);
+
+  updateHUD(
+    getSpeedRatio(ship), getDisplaySpeed(ship), ship.heading,
+    turrets.ammo, turrets.maxAmmo
+  );
 
   renderer.render(scene, cam.camera);
 }
