@@ -172,8 +172,48 @@ export function buildCombinedMults(upgradeState, crewBonuses, techBonuses) {
   return mults;
 }
 
+// --- calculate total salvage spent on all upgrades ---
+export function getTotalSpent(state) {
+  var total = 0;
+  var cats = Object.keys(UPGRADE_TREE);
+  for (var c = 0; c < cats.length; c++) {
+    var upgrades = UPGRADE_TREE[cats[c]].upgrades;
+    for (var u = 0; u < upgrades.length; u++) {
+      var up = upgrades[u];
+      var level = state.levels[up.key] || 0;
+      for (var t = 0; t < level; t++) {
+        total += up.costs[t];
+      }
+    }
+  }
+  return total;
+}
+
+// --- respec: refund all spent salvage and reset levels ---
+export function respecUpgrades(state) {
+  var refund = getTotalSpent(state);
+  state.salvage += refund;
+  var keys = Object.keys(state.levels);
+  for (var i = 0; i < keys.length; i++) {
+    state.levels[keys[i]] = 0;
+  }
+  return refund;
+}
+
+// --- get the multiplier for a single upgrade key at a given level ---
+export function getMultiplierForKey(state, key, extraLevels) {
+  var info = findUpgrade(key);
+  if (!info) return 1;
+  var level = (state.levels[key] || 0) + (extraLevels || 0);
+  var base = (key === "armor" || key === "minimap") ? 0 : 1;
+  for (var t = 0; t < level && t < info.perTier.length; t++) {
+    base += info.perTier[t];
+  }
+  return base;
+}
+
 // --- helper: find upgrade definition by key ---
-function findUpgrade(key) {
+export function findUpgrade(key) {
   var cats = Object.keys(UPGRADE_TREE);
   for (var c = 0; c < cats.length; c++) {
     var upgrades = UPGRADE_TREE[cats[c]].upgrades;

@@ -131,7 +131,7 @@ showShipSelectScreen(function (classKey) {
   selectedClass = classKey;
   hideShipSelectScreen();
   openTechThenMap();
-});
+}, upgrades);
 
 function openTechThenMap() {
   techState = loadTechState();
