@@ -27,7 +27,7 @@ import { createCrewState, resetCrew, generateOfficerReward, addOfficer, getCrewB
 import { createCrewScreen, showCrewScreen, hideCrewScreen } from "./crewScreen.js";
 import { loadTechState, getTechBonuses } from "./techTree.js";
 import { createTechScreen, showTechScreen, hideTechScreen } from "./techScreen.js";
-import { createTerrain, removeTerrain, collideWithTerrain, isLand } from "./terrain.js";
+import { createTerrain, removeTerrain, collideWithTerrain, isLand, findWaterPosition } from "./terrain.js";
 
 var SALVAGE_PER_KILL = 10;
 
@@ -245,7 +245,17 @@ setRestartCallback(function () {
   if (activeBoss) { removeBoss(activeBoss, scene); activeBoss = null; }
   hideBossHud();
   if (activeTerrain) { removeTerrain(activeTerrain, scene); activeTerrain = null; }
-  if (ship) { ship.posX = 0; ship.posZ = 0; ship.speed = 0; ship.heading = 0; ship.navTarget = null; }
+  if (ship) {
+    // Find safe water spawn — don't place on land
+    if (activeTerrain) {
+      var spawn = findWaterPosition(activeTerrain, 0, 0, 5, 80);
+      ship.posX = spawn ? spawn.x : 0;
+      ship.posZ = spawn ? spawn.z : 0;
+    } else {
+      ship.posX = 0; ship.posZ = 0;
+    }
+    ship.speed = 0; ship.heading = 0; ship.navTarget = null;
+  }
   if (weapons) { weapons.activeWeapon = 0; weapons.projectiles = []; weapons.effects = []; weapons.cooldown = 0; }
   upgradeScreenOpen = false; crewScreenOpen = false; techScreenOpen = false;
   setAutofire(false);
