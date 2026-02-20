@@ -46,6 +46,11 @@ var BOSS_DEFS = {
 };
 
 // --- shared geometry ---
+var BOSS_FLOAT_OFFSET = 1.5;
+var BUOYANCY_LERP = 8;
+var TILT_LERP = 6;
+var TILT_DAMPING = 0.2;        // bosses are big, less tilt
+
 var projGeo = null;
 var projMat = null;
 
@@ -95,7 +100,11 @@ export function createBoss(bossType, playerX, playerZ, scene, zoneDifficulty) {
     tentacleAttacks: [],
     sinking: false,
     sinkTimer: 0,
-    defeated: false
+    defeated: false,
+    // smoothed buoyancy state
+    _smoothY: 0.5,
+    _smoothPitch: 0,
+    _smoothRoll: 0
   };
 }
 
@@ -307,7 +316,26 @@ export function updateBoss(boss, ship, dt, scene, getWaveHeight, elapsed, enemyM
   boss.mesh.rotation.y = boss.heading;
 
   if (getWaveHeight) {
-    boss.mesh.position.y = getWaveHeight(boss.posX, boss.posZ, elapsed) + 1.5;
+    var targetY = getWaveHeight(boss.posX, boss.posZ, elapsed) + BOSS_FLOAT_OFFSET;
+
+    var sampleDist = 3.0;
+    var waveFore = getWaveHeight(boss.posX + Math.sin(boss.heading) * sampleDist, boss.posZ + Math.cos(boss.heading) * sampleDist, elapsed);
+    var waveAft  = getWaveHeight(boss.posX - Math.sin(boss.heading) * sampleDist, boss.posZ - Math.cos(boss.heading) * sampleDist, elapsed);
+    var wavePort = getWaveHeight(boss.posX + Math.cos(boss.heading) * sampleDist, boss.posZ - Math.sin(boss.heading) * sampleDist, elapsed);
+    var waveStbd = getWaveHeight(boss.posX - Math.cos(boss.heading) * sampleDist, boss.posZ + Math.sin(boss.heading) * sampleDist, elapsed);
+
+    var targetPitch = Math.atan2(waveFore - waveAft, sampleDist * 2) * TILT_DAMPING;
+    var targetRoll  = Math.atan2(wavePort - waveStbd, sampleDist * 2) * TILT_DAMPING;
+
+    var lerpFactor = 1 - Math.exp(-BUOYANCY_LERP * dt);
+    var tiltFactor = 1 - Math.exp(-TILT_LERP * dt);
+    boss._smoothY += (targetY - boss._smoothY) * lerpFactor;
+    boss._smoothPitch += (targetPitch - boss._smoothPitch) * tiltFactor;
+    boss._smoothRoll += (targetRoll - boss._smoothRoll) * tiltFactor;
+
+    boss.mesh.position.y = boss._smoothY;
+    boss.mesh.rotation.x = boss._smoothPitch;
+    boss.mesh.rotation.z = boss._smoothRoll;
   }
 
   // animate kraken tentacles
