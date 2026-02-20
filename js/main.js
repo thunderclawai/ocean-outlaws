@@ -24,6 +24,8 @@ import { createBoss, updateBoss, removeBoss, rollBossLoot, applyBossLoot } from 
 import { createBossHud, showBossHud, hideBossHud, updateBossHud, showLootBanner } from "./bossHud.js";
 import { createCrewState, resetCrew, generateOfficerReward, addOfficer, getCrewBonuses } from "./crew.js";
 import { createCrewScreen, showCrewScreen, hideCrewScreen } from "./crewScreen.js";
+import { loadTechState, getTechBonuses } from "./techTree.js";
+import { createTechScreen, showTechScreen, hideTechScreen } from "./techScreen.js";
 
 // --- salvage tuning ---
 var SALVAGE_PER_KILL = 10;
@@ -72,6 +74,7 @@ var upgradeScreenOpen = false;
 var gameStarted = false;
 var activeBoss = null;    // current boss instance (or null)
 var crewScreenOpen = false;
+var techScreenOpen = false;
 
 // --- strategic map state ---
 var mapState = loadMapState();
@@ -97,10 +100,16 @@ createUpgradeScreen();
 var crew = createCrewState();
 createCrewScreen();
 
-// wire enemy death → pickup spawn + salvage
+// --- tech tree (persistent across runs) ---
+var techState = loadTechState();
+createTechScreen();
+
+// wire enemy death → pickup spawn + salvage (tech bonus applied)
 setOnDeathCallback(enemyMgr, function (x, y, z) {
   spawnPickup(pickupMgr, x, y, z, scene);
-  addSalvage(upgrades, SALVAGE_PER_KILL);
+  var techB = getTechBonuses(techState);
+  var salvageAmt = Math.round(SALVAGE_PER_KILL * (1 + techB.salvageBonus));
+  addSalvage(upgrades, salvageAmt);
 });
 
 // --- wave manager ---
@@ -129,8 +138,21 @@ createShipSelectScreen();
 showShipSelectScreen(function (classKey) {
   selectedClass = classKey;
   hideShipSelectScreen();
-  openMap();
+  openTechThenMap();
 });
+
+// --- open tech screen, then strategic map ---
+function openTechThenMap() {
+  techState = loadTechState();
+  techScreenOpen = true;
+  showTechScreen(techState, {
+    get: function () { return upgrades.salvage; },
+    spend: function (cost) { upgrades.salvage -= cost; }
+  }, function () {
+    techScreenOpen = false;
+    openMap();
+  });
+}
 
 // --- open the strategic map ---
 function openMap() {
@@ -279,11 +301,13 @@ setRestartCallback(function () {
   }
   upgradeScreenOpen = false;
   crewScreenOpen = false;
+  techScreenOpen = false;
   setWeather(weather, "calm");
   hideUpgradeScreen();
   hideCrewScreen();
+  hideTechScreen();
   hideOverlay();
-  openMap();
+  openTechThenMap();
 });
 
 // --- resize ---
@@ -305,7 +329,7 @@ function animate() {
   var input = getInput();
   var mouse = getMouse();
 
-  if (!gameFrozen && !upgradeScreenOpen && !crewScreenOpen && gameStarted) {
+  if (!gameFrozen && !upgradeScreenOpen && !crewScreenOpen && !techScreenOpen && gameStarted) {
     var mults = getMultipliers(upgrades);
 
     // apply crew bonuses on top of upgrade multipliers
@@ -315,6 +339,20 @@ function animate() {
     mults.maxSpeed = mults.maxSpeed * crewBonus.maxSpeed;
     mults.turnRate = mults.turnRate * crewBonus.turnRate;
     mults.repair = mults.repair * crewBonus.repair;
+
+    // apply tech tree bonuses (persistent)
+    var techBonus = getTechBonuses(techState);
+    mults.damage += techBonus.damage;
+    mults.fireRate += techBonus.fireRate;
+    mults.maxHp += techBonus.maxHp;
+    mults.armor += techBonus.armor;
+    mults.enemyRange += techBonus.enemyRange;
+    mults.pickupRange += techBonus.pickupRange;
+    mults.maxSpeed += techBonus.maxSpeed;
+    mults.critChance = techBonus.critChance;
+    mults.splash = techBonus.splash;
+    mults.autoRepair = techBonus.autoRepair;
+    mults.dmgReflect = techBonus.dmgReflect;
 
     // ability activation (Q key)
     if (consumeAbility() && abilityState) {
@@ -424,6 +462,14 @@ function animate() {
     updateEnemies(enemyMgr, ship, dt, scene, weatherWaveHeight, elapsed, waveMgr, waveConfig);
 
     updatePickups(pickupMgr, ship, resources, dt, elapsed, weatherWaveHeight, scene);
+
+    // tech: auto-repair — regen 1 HP/sec
+    if (mults.autoRepair) {
+      var arHp = getPlayerHp(enemyMgr);
+      if (arHp.hp < arHp.maxHp) {
+        setPlayerHp(enemyMgr, Math.min(arHp.maxHp, arHp.hp + dt));
+      }
+    }
 
     var hpInfo = getPlayerHp(enemyMgr);
     var aliveEnemyCount = 0;
