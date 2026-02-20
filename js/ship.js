@@ -4,7 +4,7 @@ import { buildClassMesh } from "./shipModels.js";
 import { collideWithTerrain } from "./terrain.js";
 
 // --- default physics tuning (used as fallback) ---
-var DEFAULT_MAX_SPEED = 16;
+var DEFAULT_MAX_SPEED = 10;
 var DEFAULT_ACCEL = 7;
 var DEFAULT_TURN_RATE = 2.2;
 var REVERSE_ACCEL_RATIO = 0.5;  // reverse accel as fraction of forward accel

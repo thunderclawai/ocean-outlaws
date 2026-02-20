@@ -260,10 +260,10 @@ function buildTerrainMesh(heightmap) {
   var positions = [];
   var colors = [];
 
-  var colorLand = new THREE.Color(0x2d5a1e);     // green
-  var colorDirt = new THREE.Color(0x6b4423);      // brown
-  var colorBeach = new THREE.Color(0xc2b280);     // sandy
-  var colorPeak = new THREE.Color(0x3d7a2e);      // darker green peak
+  var colorLand = new THREE.Color(0x4a7a35);     // brighter green
+  var colorDirt = new THREE.Color(0x8b6914);      // warmer brown
+  var colorBeach = new THREE.Color(0xe8d5a0);     // bright sandy (high contrast)
+  var colorPeak = new THREE.Color(0x5a5a5a);      // rocky grey
 
   for (var iy = 0; iy < size - 1; iy++) {
     for (var ix = 0; ix < size - 1; ix++) {
@@ -317,6 +317,8 @@ function buildTerrainMesh(heightmap) {
   });
 
   var mesh = new THREE.Mesh(geometry, material);
+  mesh.position.y = 2;  // raise terrain above max wave height
+  mesh.renderOrder = 2; // render after ocean
   return mesh;
 }
 

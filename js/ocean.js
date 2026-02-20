@@ -15,30 +15,30 @@ var vertexShader = /* glsl */ `
     float amp = uWaveAmp;
 
     // layer 1 — broad swells
-    pos.z += sin(pos.x * 0.3 + uTime * 0.8) * 1.2 * amp;
-    pos.z += sin(pos.y * 0.2 + uTime * 0.6) * 1.0 * amp;
+    pos.z += sin(pos.x * 0.3 + uTime * 0.8) * 0.4 * amp;
+    pos.z += sin(pos.y * 0.2 + uTime * 0.6) * 0.35 * amp;
 
     // layer 2 — medium chop
-    pos.z += sin(pos.x * 0.8 + pos.y * 0.6 + uTime * 1.4) * 0.5 * amp;
+    pos.z += sin(pos.x * 0.8 + pos.y * 0.6 + uTime * 1.4) * 0.18 * amp;
 
     // layer 3 — small ripples
-    pos.z += sin(pos.x * 2.0 + uTime * 2.0) * 0.15 * amp;
-    pos.z += sin(pos.y * 2.5 + uTime * 1.8) * 0.12 * amp;
+    pos.z += sin(pos.x * 2.0 + uTime * 2.0) * 0.06 * amp;
+    pos.z += sin(pos.y * 2.5 + uTime * 1.8) * 0.05 * amp;
 
     vHeight = pos.z;
 
     // compute normal via finite differences
     float eps = 0.5;
-    float hR = sin((pos.x + eps) * 0.3 + uTime * 0.8) * 1.2 * amp
-             + sin(pos.y * 0.2 + uTime * 0.6) * 1.0 * amp
-             + sin((pos.x + eps) * 0.8 + pos.y * 0.6 + uTime * 1.4) * 0.5 * amp
-             + sin((pos.x + eps) * 2.0 + uTime * 2.0) * 0.15 * amp
-             + sin(pos.y * 2.5 + uTime * 1.8) * 0.12 * amp;
-    float hF = sin(pos.x * 0.3 + uTime * 0.8) * 1.2 * amp
-             + sin((pos.y + eps) * 0.2 + uTime * 0.6) * 1.0 * amp
-             + sin(pos.x * 0.8 + (pos.y + eps) * 0.6 + uTime * 1.4) * 0.5 * amp
-             + sin(pos.x * 2.0 + uTime * 2.0) * 0.15 * amp
-             + sin((pos.y + eps) * 2.5 + uTime * 1.8) * 0.12 * amp;
+    float hR = sin((pos.x + eps) * 0.3 + uTime * 0.8) * 0.4 * amp
+             + sin(pos.y * 0.2 + uTime * 0.6) * 0.35 * amp
+             + sin((pos.x + eps) * 0.8 + pos.y * 0.6 + uTime * 1.4) * 0.18 * amp
+             + sin((pos.x + eps) * 2.0 + uTime * 2.0) * 0.06 * amp
+             + sin(pos.y * 2.5 + uTime * 1.8) * 0.05 * amp;
+    float hF = sin(pos.x * 0.3 + uTime * 0.8) * 0.4 * amp
+             + sin((pos.y + eps) * 0.2 + uTime * 0.6) * 0.35 * amp
+             + sin(pos.x * 0.8 + (pos.y + eps) * 0.6 + uTime * 1.4) * 0.18 * amp
+             + sin(pos.x * 2.0 + uTime * 2.0) * 0.06 * amp
+             + sin((pos.y + eps) * 2.5 + uTime * 1.8) * 0.05 * amp;
     // normal in local plane space (x, y are plane coords, z is up)
     vNormal = normalize(vec3(-(hR - pos.z) / eps, -(hF - pos.z) / eps, 1.0));
 
@@ -114,7 +114,7 @@ var fragmentShader = /* glsl */ `
     float shimmer = sin(vUv.x * 60.0 + uTime * 1.5) * sin(vUv.y * 60.0 + uTime * 1.2);
     col += vec3(0.01) * smoothstep(0.6, 1.0, shimmer) * t;
 
-    gl_FragColor = vec4(col, 0.85);
+    gl_FragColor = vec4(col, 1.0);
   }
 `;
 
@@ -143,13 +143,13 @@ export function createOcean() {
     fragmentShader: fragmentShader,
     uniforms: uniforms,
     side: THREE.DoubleSide,
-    transparent: true,
-    depthWrite: false
+    transparent: false,
+    depthWrite: true
   });
 
   var mesh = new THREE.Mesh(geometry, material);
   mesh.rotation.x = -Math.PI / 2; // lay flat
-  mesh.renderOrder = 1; // render after terrain (renderOrder 0)
+  mesh.renderOrder = 0;
 
   return { mesh: mesh, uniforms: uniforms };
 }
