@@ -121,8 +121,19 @@ export function createEnemyManager() {
     spawnInterval: INITIAL_SPAWN_INTERVAL,
     elapsed: 0,
     playerHp: PLAYER_HP,
-    playerMaxHp: PLAYER_HP
+    playerMaxHp: PLAYER_HP,
+    onDeathCallback: null     // called with (x, y, z) when enemy destroyed
   };
+}
+
+// --- set callback for enemy death (used for pickup spawning) ---
+export function setOnDeathCallback(manager, callback) {
+  manager.onDeathCallback = callback;
+}
+
+// --- set player HP (used by repair system) ---
+export function setPlayerHp(manager, hp) {
+  manager.playerHp = Math.min(manager.playerMaxHp, Math.max(0, hp));
 }
 
 // --- spawn a single enemy at map edge ---
@@ -162,13 +173,15 @@ function spawnEnemy(manager, playerX, playerZ, scene) {
 }
 
 // --- update all enemies ---
-export function updateEnemies(manager, ship, dt, scene, getWaveHeight, elapsed) {
+export function updateEnemies(manager, ship, dt, scene, getWaveHeight, elapsed, resources) {
   manager.elapsed = elapsed;
 
-  // --- spawning ---
+  // --- spawning (only during active wave, and only while enemies remain in wave) ---
+  var canSpawn = !resources || (resources.waveActive && resources.waveEnemiesRemaining > 0);
   manager.spawnTimer -= dt;
-  if (manager.spawnTimer <= 0) {
+  if (manager.spawnTimer <= 0 && canSpawn) {
     spawnEnemy(manager, ship.posX, ship.posZ, scene);
+    if (resources) resources.waveEnemiesRemaining--;
     manager.spawnInterval = Math.max(
       MIN_SPAWN_INTERVAL,
       manager.spawnInterval - SPAWN_ACCEL * manager.spawnInterval
@@ -399,6 +412,9 @@ export function damageEnemy(manager, enemy, scene) {
     enemy.sinking = true;
     enemy.sinkTimer = 0;
     spawnExplosion(manager, enemy.posX, enemy.mesh.position.y, enemy.posZ, scene);
+    if (manager.onDeathCallback) {
+      manager.onDeathCallback(enemy.posX, enemy.mesh.position.y, enemy.posZ);
+    }
   }
 }
 
