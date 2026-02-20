@@ -5,6 +5,9 @@ var speedBar = null;
 var speedLabel = null;
 var compassLabel = null;
 var ammoLabel = null;
+var hpBarBg = null;
+var hpBar = null;
+var hpLabel = null;
 
 export function createHUD() {
   container = document.createElement("div");
@@ -64,10 +67,40 @@ export function createHUD() {
   ammoLabel.style.color = "#8899aa";
   container.appendChild(ammoLabel);
 
+  // player HP bar
+  hpLabel = document.createElement("div");
+  hpLabel.textContent = "HP";
+  hpLabel.style.marginTop = "8px";
+  hpLabel.style.fontSize = "12px";
+  hpLabel.style.color = "#667788";
+  container.appendChild(hpLabel);
+
+  hpBarBg = document.createElement("div");
+  hpBarBg.style.cssText = [
+    "width: 120px",
+    "height: 8px",
+    "background: rgba(20, 30, 50, 0.7)",
+    "border: 1px solid rgba(80, 100, 130, 0.4)",
+    "border-radius: 4px",
+    "overflow: hidden",
+    "margin-top: 3px"
+  ].join(";");
+
+  hpBar = document.createElement("div");
+  hpBar.style.cssText = [
+    "width: 100%",
+    "height: 100%",
+    "background: #44aa66",
+    "border-radius: 3px",
+    "transition: width 0.2s"
+  ].join(";");
+  hpBarBg.appendChild(hpBar);
+  container.appendChild(hpBarBg);
+
   document.body.appendChild(container);
 }
 
-export function updateHUD(speedRatio, displaySpeed, heading, ammo, maxAmmo) {
+export function updateHUD(speedRatio, displaySpeed, heading, ammo, maxAmmo, hp, maxHp) {
   if (!container) return;
 
   var pct = Math.min(1, speedRatio) * 100;
@@ -84,5 +117,14 @@ export function updateHUD(speedRatio, displaySpeed, heading, ammo, maxAmmo) {
   if (ammo !== undefined) {
     ammoLabel.textContent = "AMMO: " + ammo + " / " + maxAmmo;
     ammoLabel.style.color = ammo <= 5 ? "#cc6644" : "#8899aa";
+  }
+
+  // player HP
+  if (hp !== undefined && hpBar) {
+    var hpPct = Math.max(0, hp / maxHp) * 100;
+    hpBar.style.width = hpPct + "%";
+    hpBar.style.background = hpPct > 50 ? "#44aa66" : hpPct > 25 ? "#aaaa44" : "#cc4444";
+    hpLabel.textContent = "HP: " + hp + " / " + maxHp;
+    hpLabel.style.color = hpPct > 25 ? "#667788" : "#cc4444";
   }
 }

@@ -1,5 +1,6 @@
 // turret.js — turret aiming, firing, projectile physics, hit detection, visual effects
 import * as THREE from "three";
+import { damageEnemy } from "./enemy.js";
 
 // --- tuning ---
 var PROJECTILE_SPEED = 60;
@@ -163,7 +164,8 @@ function spawnSplash(turretState, scene, position) {
 }
 
 // --- update projectiles, effects, cooldown ---
-export function updateTurrets(turretState, dt, scene, enemies) {
+export function updateTurrets(turretState, dt, scene, enemyManager) {
+  var enemies = enemyManager ? enemyManager.enemies : [];
   // cooldown
   turretState.cooldown = Math.max(0, turretState.cooldown - dt);
 
@@ -211,7 +213,7 @@ export function updateTurrets(turretState, dt, scene, enemies) {
     // hit max range
     var outOfRange = dist > MAX_RANGE;
     // hit enemy
-    var hitEnemy = checkEnemyHit(p, enemies);
+    var hitEnemy = checkEnemyHit(p, enemies, enemyManager, scene);
 
     if (hitWater || outOfRange || hitEnemy) {
       // splash on water hit or enemy hit
@@ -255,7 +257,7 @@ export function updateTurrets(turretState, dt, scene, enemies) {
 }
 
 // --- enemy hit detection (bounding sphere) ---
-function checkEnemyHit(projectile, enemies) {
+function checkEnemyHit(projectile, enemies, enemyManager, scene) {
   if (!enemies) return false;
   var pp = projectile.mesh.position;
   for (var i = 0; i < enemies.length; i++) {
@@ -268,11 +270,8 @@ function checkEnemyHit(projectile, enemies) {
     var distSq = dx * dx + dz * dz;
     var hitRadius = enemy.hitRadius || 2.0;
     if (distSq < hitRadius * hitRadius) {
-      enemy.hp--;
-      if (enemy.hp <= 0) {
-        enemy.alive = false;
-        enemy.mesh.visible = false;
-        console.log("[SFX] ENEMY DESTROYED");
+      if (enemyManager) {
+        damageEnemy(enemyManager, enemy, scene);
       }
       return true;
     }
