@@ -1,31 +1,31 @@
 // ship.js — procedural ship model, physics state, update loop
 import * as THREE from "three";
+import { buildClassMesh } from "./shipModels.js";
 
-// --- physics tuning ---
-var MAX_SPEED = 30;
-var ACCEL = 12;
-var REVERSE_ACCEL = 6;
+// --- default physics tuning (used as fallback) ---
+var DEFAULT_MAX_SPEED = 30;
+var DEFAULT_ACCEL = 12;
+var DEFAULT_TURN_RATE = 2.2;
+var REVERSE_ACCEL_RATIO = 0.5;  // reverse accel as fraction of forward accel
 var DRAG = 4;
-var TURN_SPEED_LOW = 2.2;   // turning rate at zero speed (rad/s)
-var TURN_SPEED_HIGH = 0.8;  // turning rate at max speed (rad/s)
-var FLOAT_OFFSET = 1.2;     // height above wave surface so hull clears peaks
+var TURN_SPEED_HIGH_RATIO = 0.36; // turn rate at max speed as ratio of base turn rate
+var FLOAT_OFFSET = 1.2;
 
 // --- auto-nav tuning ---
-var NAV_ARRIVE_RADIUS = 3;    // stop within this distance
-var NAV_SLOW_RADIUS = 15;     // start decelerating
-var NAV_TURN_SPEED = 2.5;     // auto-nav turning rate (rad/s)
+var NAV_ARRIVE_RADIUS = 3;
+var NAV_SLOW_RADIUS = 15;
+var NAV_TURN_SPEED = 2.5;
 
-// --- procedural ship geometry ---
+// --- fallback procedural ship geometry (original design) ---
 function buildShipMesh() {
   var group = new THREE.Group();
 
-  // hull — tapered box narrowing at bow
   var hullShape = new THREE.Shape();
-  hullShape.moveTo(0, 2.4);     // bow tip
+  hullShape.moveTo(0, 2.4);
   hullShape.lineTo(0.7, 1.0);
   hullShape.lineTo(0.8, -0.6);
-  hullShape.lineTo(0.7, -1.8);  // stern quarter
-  hullShape.lineTo(0.5, -2.2);  // stern
+  hullShape.lineTo(0.7, -1.8);
+  hullShape.lineTo(0.5, -2.2);
   hullShape.lineTo(-0.5, -2.2);
   hullShape.lineTo(-0.7, -1.8);
   hullShape.lineTo(-0.8, -0.6);
@@ -40,7 +40,6 @@ function buildShipMesh() {
   hull.position.y = -0.1;
   group.add(hull);
 
-  // deck — flat plane on top
   var deckGeo = new THREE.PlaneGeometry(1.2, 3.6);
   var deckMat = new THREE.MeshLambertMaterial({ color: 0x667788 });
   var deck = new THREE.Mesh(deckGeo, deckMat);
@@ -49,14 +48,12 @@ function buildShipMesh() {
   deck.position.z = -0.2;
   group.add(deck);
 
-  // bridge — small box toward stern
   var bridgeGeo = new THREE.BoxGeometry(0.7, 0.6, 0.8);
   var bridgeMat = new THREE.MeshLambertMaterial({ color: 0x778899 });
   var bridge = new THREE.Mesh(bridgeGeo, bridgeMat);
   bridge.position.set(0, 0.7, -0.6);
   group.add(bridge);
 
-  // forward turret — rotatable group (child of ship so it moves with ship)
   var turretGeo = new THREE.CylinderGeometry(0.2, 0.25, 0.3, 6);
   var turretMat = new THREE.MeshLambertMaterial({ color: 0x445566 });
   var barrelGeo = new THREE.CylinderGeometry(0.04, 0.04, 0.7, 4);
@@ -64,19 +61,16 @@ function buildShipMesh() {
 
   var fwdTurret = new THREE.Group();
   fwdTurret.position.set(0, 0.55, 0.8);
-  var fwdBase = new THREE.Mesh(turretGeo, turretMat);
-  fwdTurret.add(fwdBase);
+  fwdTurret.add(new THREE.Mesh(turretGeo, turretMat));
   var fwdBarrel = new THREE.Mesh(barrelGeo, barrelMat);
   fwdBarrel.rotation.x = Math.PI / 2;
   fwdBarrel.position.set(0, 0.1, 0.35);
   fwdTurret.add(fwdBarrel);
   group.add(fwdTurret);
 
-  // rear turret — rotatable group
   var rearTurret = new THREE.Group();
   rearTurret.position.set(0, 0.55, -1.4);
-  var rearBase = new THREE.Mesh(turretGeo, turretMat);
-  rearTurret.add(rearBase);
+  rearTurret.add(new THREE.Mesh(turretGeo, turretMat));
   var rearBarrel = new THREE.Mesh(barrelGeo, barrelMat);
   rearBarrel.rotation.x = Math.PI / 2;
   rearBarrel.position.set(0, 0.1, 0.35);
@@ -85,7 +79,6 @@ function buildShipMesh() {
 
   group.userData.turrets = [fwdTurret, rearTurret];
 
-  // mast / antenna
   var mastGeo = new THREE.CylinderGeometry(0.02, 0.03, 1.0, 4);
   var mastMat = new THREE.MeshLambertMaterial({ color: 0x556677 });
   var mast = new THREE.Mesh(mastGeo, mastMat);
@@ -96,17 +89,29 @@ function buildShipMesh() {
 }
 
 // --- create ship ---
-export function createShip() {
-  var mesh = buildShipMesh();
+// classConfig: optional { stats: { maxSpeed, turnRate, accel, ... }, key: "destroyer" }
+export function createShip(classConfig) {
+  var mesh;
+  if (classConfig && classConfig.key) {
+    mesh = buildClassMesh(classConfig.key);
+  } else {
+    mesh = buildShipMesh();
+  }
+
+  var stats = classConfig ? classConfig.stats : null;
 
   var state = {
     mesh: mesh,
     speed: 0,
-    heading: 0,          // radians, 0 = +Z direction initially facing "north"
+    heading: 0,
     posX: 0,
     posZ: 0,
-    // auto-navigation
-    navTarget: null       // { x, z } or null when no auto-nav
+    navTarget: null,
+    classKey: classConfig ? classConfig.key : null,
+    // base stats from class (or defaults)
+    baseMaxSpeed: stats ? stats.maxSpeed : DEFAULT_MAX_SPEED,
+    baseAccel: stats ? stats.accel : DEFAULT_ACCEL,
+    baseTurnRate: stats ? stats.turnRate : DEFAULT_TURN_RATE
   };
 
   return state;
@@ -130,38 +135,36 @@ function normalizeAngle(a) {
 }
 
 // --- update ship physics ---
-// fuelMult: 0-1 multiplier on max speed from fuel level (optional, defaults to 1)
-// upgradeMults: { maxSpeed, turnRate, accel } multipliers from upgrade system (optional)
 export function updateShip(ship, input, dt, getWaveHeight, elapsed, fuelMult, upgradeMults) {
   var speedMult = upgradeMults ? upgradeMults.maxSpeed : 1;
   var turnMult2 = upgradeMults ? upgradeMults.turnRate : 1;
   var accelMult = upgradeMults ? upgradeMults.accel : 1;
-  var effectiveMaxSpeed = MAX_SPEED * speedMult * (fuelMult !== undefined ? fuelMult : 1);
-  var effectiveAccel = ACCEL * accelMult;
-  var effectiveReverseAccel = REVERSE_ACCEL * accelMult;
+
+  var baseMax = ship.baseMaxSpeed || DEFAULT_MAX_SPEED;
+  var baseAccel = ship.baseAccel || DEFAULT_ACCEL;
+  var baseTurn = ship.baseTurnRate || DEFAULT_TURN_RATE;
+
+  var effectiveMaxSpeed = baseMax * speedMult * (fuelMult !== undefined ? fuelMult : 1);
+  var effectiveAccel = baseAccel * accelMult;
+  var effectiveReverseAccel = baseAccel * REVERSE_ACCEL_RATIO * accelMult;
   var wasdActive = input.forward || input.backward || input.left || input.right;
 
-  // WASD overrides auto-nav
   if (wasdActive) {
     ship.navTarget = null;
   }
 
   if (ship.navTarget && !wasdActive) {
-    // --- auto-navigation ---
     var dx = ship.navTarget.x - ship.posX;
     var dz = ship.navTarget.z - ship.posZ;
     var dist = Math.sqrt(dx * dx + dz * dz);
 
     if (dist < NAV_ARRIVE_RADIUS) {
-      // arrived — stop
       ship.navTarget = null;
-      ship.speed *= 0.8; // gentle decel
+      ship.speed *= 0.8;
     } else {
-      // steer toward target
       var targetAngle = Math.atan2(dx, dz);
       var angleDiff = normalizeAngle(targetAngle - ship.heading);
 
-      // rotate toward target
       var maxTurn = NAV_TURN_SPEED * dt;
       if (Math.abs(angleDiff) < maxTurn) {
         ship.heading = targetAngle;
@@ -169,10 +172,8 @@ export function updateShip(ship, input, dt, getWaveHeight, elapsed, fuelMult, up
         ship.heading += Math.sign(angleDiff) * maxTurn;
       }
 
-      // throttle — full speed far away, decelerate near target
       var speedFactor = Math.min(1, dist / NAV_SLOW_RADIUS);
       var desiredSpeed = effectiveMaxSpeed * speedFactor;
-      // only accelerate when roughly facing target
       if (Math.abs(angleDiff) < Math.PI * 0.5) {
         if (ship.speed < desiredSpeed) {
           ship.speed += effectiveAccel * dt;
@@ -182,20 +183,17 @@ export function updateShip(ship, input, dt, getWaveHeight, elapsed, fuelMult, up
           if (ship.speed < desiredSpeed) ship.speed = desiredSpeed;
         }
       } else {
-        // turning in place — slow down
         ship.speed -= DRAG * dt;
         if (ship.speed < 0) ship.speed = 0;
       }
     }
   } else {
-    // --- manual WASD controls ---
     if (input.forward) {
       ship.speed += effectiveAccel * dt;
     } else if (input.backward) {
       ship.speed -= effectiveReverseAccel * dt;
     }
 
-    // drag — always opposes motion
     if (!input.forward && !input.backward) {
       if (ship.speed > 0) {
         ship.speed -= DRAG * dt;
@@ -206,34 +204,30 @@ export function updateShip(ship, input, dt, getWaveHeight, elapsed, fuelMult, up
       }
     }
 
-    // turning — interpolate turn rate based on speed ratio
+    var turnSpeedLow = baseTurn * turnMult2;
+    var turnSpeedHigh = baseTurn * TURN_SPEED_HIGH_RATIO * turnMult2;
     var speedRatio = Math.abs(ship.speed) / effectiveMaxSpeed;
-    var turnRate = (TURN_SPEED_LOW + (TURN_SPEED_HIGH - TURN_SPEED_LOW) * speedRatio) * turnMult2;
+    var turnRate = turnSpeedLow + (turnSpeedHigh - turnSpeedLow) * speedRatio;
     var turnMult = Math.max(0.1, Math.min(1, Math.abs(ship.speed) / 5));
 
     if (input.left)  ship.heading += turnRate * turnMult * dt;
     if (input.right) ship.heading -= turnRate * turnMult * dt;
   }
 
-  // clamp speed
   var maxReverse = effectiveMaxSpeed * 0.3;
   ship.speed = Math.max(-maxReverse, Math.min(effectiveMaxSpeed, ship.speed));
 
-  // movement
   ship.posX += Math.sin(ship.heading) * ship.speed * dt;
   ship.posZ += Math.cos(ship.heading) * ship.speed * dt;
 
-  // apply to mesh
   ship.mesh.position.x = ship.posX;
   ship.mesh.position.z = ship.posZ;
   ship.mesh.rotation.y = ship.heading;
 
-  // --- buoyancy: sample wave height and float above it ---
   if (getWaveHeight) {
     var waveY = getWaveHeight(ship.posX, ship.posZ, elapsed);
     ship.mesh.position.y = waveY + FLOAT_OFFSET;
 
-    // gentle pitch/roll from wave slope
     var sampleDist = 1.5;
     var waveFore = getWaveHeight(ship.posX + Math.sin(ship.heading) * sampleDist, ship.posZ + Math.cos(ship.heading) * sampleDist, elapsed);
     var waveAft  = getWaveHeight(ship.posX - Math.sin(ship.heading) * sampleDist, ship.posZ - Math.cos(ship.heading) * sampleDist, elapsed);
@@ -250,7 +244,7 @@ export function updateShip(ship, input, dt, getWaveHeight, elapsed, fuelMult, up
 
 // --- get normalized speed for HUD (0-1) ---
 export function getSpeedRatio(ship) {
-  return Math.abs(ship.speed) / MAX_SPEED;
+  return Math.abs(ship.speed) / (ship.baseMaxSpeed || DEFAULT_MAX_SPEED);
 }
 
 // --- get speed in display units (knots-like) ---

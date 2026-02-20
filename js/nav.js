@@ -12,6 +12,9 @@ var marker = null;
 var markerActive = false;
 var markerTargetX = 0;
 var markerTargetZ = 0;
+var navShipRef = null;
+var navCameraRef = null;
+var initialized = false;
 
 // --- build destination marker (pulsing ring on water) ---
 function buildMarker() {
@@ -29,7 +32,6 @@ function buildMarker() {
   ring.rotation.x = -Math.PI / 2;
   group.add(ring);
 
-  // inner dot
   var dotGeo = new THREE.CircleGeometry(0.3, 12);
   var dotMat = new THREE.MeshBasicMaterial({
     color: 0x66ccff,
@@ -57,33 +59,37 @@ function projectToOcean(clientX, clientY, camera) {
 
 // --- init click/tap handler ---
 export function initNav(camera, ship, scene) {
+  navShipRef = ship;
+  navCameraRef = camera;
+
+  if (initialized) return;
+  initialized = true;
+
   marker = buildMarker();
   scene.add(marker);
 
   function handleNav(clientX, clientY) {
-    var hit = projectToOcean(clientX, clientY, camera);
+    if (!navShipRef || !navCameraRef) return;
+    var hit = projectToOcean(clientX, clientY, navCameraRef);
     if (hit) {
       markerTargetX = intersectPoint.x;
       markerTargetZ = intersectPoint.z;
       markerActive = true;
       marker.visible = true;
-      setNavTarget(ship, intersectPoint.x, intersectPoint.z);
+      setNavTarget(navShipRef, intersectPoint.x, intersectPoint.z);
     }
   }
 
-  // prevent context menu on right-click so nav works
   window.addEventListener("contextmenu", function (e) {
     e.preventDefault();
   });
 
-  // desktop: right-click to set navigation target
   window.addEventListener("mousedown", function (e) {
     if (e.button !== 2) return;
     if (e.target !== document.querySelector("canvas")) return;
     handleNav(e.clientX, e.clientY);
   });
 
-  // mobile: tap sets both fire target and navigation
   window.addEventListener("touchstart", function (e) {
     if (e.touches.length !== 1) return;
     var touch = e.touches[0];
@@ -95,7 +101,6 @@ export function initNav(camera, ship, scene) {
 export function updateNav(ship, elapsed) {
   if (!marker) return;
 
-  // hide marker when ship has no nav target (arrived or WASD override)
   if (!ship.navTarget) {
     if (markerActive) {
       markerActive = false;
@@ -104,11 +109,9 @@ export function updateNav(ship, elapsed) {
     return;
   }
 
-  // position marker on water surface at target
   var waveY = getWaveHeight(markerTargetX, markerTargetZ, elapsed);
   marker.position.set(markerTargetX, waveY + 0.3, markerTargetZ);
 
-  // pulse effect
   var pulse = 1.0 + Math.sin(elapsed * 3) * 0.15;
   marker.scale.set(pulse, 1, pulse);
 }

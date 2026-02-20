@@ -1,0 +1,178 @@
+// shipSelect.js — ship class selection screen before game start
+import { getClassOrder, getAllClasses } from "./shipClass.js";
+
+var overlay = null;
+var onSelectCallback = null;
+
+export function createShipSelectScreen() {
+  overlay = document.createElement("div");
+  overlay.style.cssText = [
+    "position: fixed",
+    "top: 0",
+    "left: 0",
+    "width: 100%",
+    "height: 100%",
+    "display: flex",
+    "flex-direction: column",
+    "align-items: center",
+    "justify-content: center",
+    "background: rgba(5, 5, 15, 0.92)",
+    "z-index: 200",
+    "font-family: monospace",
+    "user-select: none"
+  ].join(";");
+
+  var title = document.createElement("div");
+  title.textContent = "CHOOSE YOUR SHIP";
+  title.style.cssText = [
+    "font-size: 32px",
+    "font-weight: bold",
+    "color: #8899aa",
+    "margin-bottom: 32px",
+    "text-shadow: 0 0 20px rgba(100,140,200,0.3)"
+  ].join(";");
+  overlay.appendChild(title);
+
+  var grid = document.createElement("div");
+  grid.style.cssText = [
+    "display: flex",
+    "gap: 16px",
+    "flex-wrap: wrap",
+    "justify-content: center",
+    "max-width: 800px"
+  ].join(";");
+
+  var order = getClassOrder();
+  var classes = getAllClasses();
+
+  for (var i = 0; i < order.length; i++) {
+    var cls = classes[order[i]];
+    var card = buildCard(cls);
+    grid.appendChild(card);
+  }
+
+  overlay.appendChild(grid);
+
+  var hint = document.createElement("div");
+  hint.textContent = "Click a ship to start";
+  hint.style.cssText = [
+    "font-size: 14px",
+    "color: #556677",
+    "margin-top: 24px"
+  ].join(";");
+  overlay.appendChild(hint);
+
+  document.body.appendChild(overlay);
+}
+
+function buildCard(cls) {
+  var card = document.createElement("div");
+  card.style.cssText = [
+    "width: 170px",
+    "padding: 16px",
+    "background: rgba(20, 30, 50, 0.8)",
+    "border: 1px solid rgba(80, 100, 130, 0.4)",
+    "border-radius: 8px",
+    "cursor: pointer",
+    "pointer-events: auto",
+    "transition: border-color 0.2s, transform 0.15s"
+  ].join(";");
+
+  card.addEventListener("mouseenter", function () {
+    card.style.borderColor = cls.color;
+    card.style.transform = "scale(1.05)";
+  });
+  card.addEventListener("mouseleave", function () {
+    card.style.borderColor = "rgba(80, 100, 130, 0.4)";
+    card.style.transform = "scale(1)";
+  });
+
+  var name = document.createElement("div");
+  name.textContent = cls.name;
+  name.style.cssText = [
+    "font-size: 18px",
+    "font-weight: bold",
+    "color: " + cls.color,
+    "margin-bottom: 6px"
+  ].join(";");
+  card.appendChild(name);
+
+  var desc = document.createElement("div");
+  desc.textContent = cls.description;
+  desc.style.cssText = [
+    "font-size: 11px",
+    "color: #667788",
+    "margin-bottom: 10px",
+    "min-height: 28px"
+  ].join(";");
+  card.appendChild(desc);
+
+  // stats
+  var stats = [
+    { label: "HP", value: cls.stats.hp },
+    { label: "Speed", value: cls.stats.maxSpeed },
+    { label: "Turn", value: cls.stats.turnRate.toFixed(1) },
+    { label: "Armor", value: Math.round(cls.stats.armor * 100) + "%" }
+  ];
+
+  for (var s = 0; s < stats.length; s++) {
+    var row = document.createElement("div");
+    row.style.cssText = [
+      "display: flex",
+      "justify-content: space-between",
+      "font-size: 11px",
+      "color: #8899aa",
+      "margin-bottom: 2px"
+    ].join(";");
+    var lbl = document.createElement("span");
+    lbl.textContent = stats[s].label;
+    lbl.style.color = "#667788";
+    var val = document.createElement("span");
+    val.textContent = stats[s].value;
+    row.appendChild(lbl);
+    row.appendChild(val);
+    card.appendChild(row);
+  }
+
+  // ability
+  var abilityRow = document.createElement("div");
+  abilityRow.style.cssText = [
+    "margin-top: 8px",
+    "padding-top: 6px",
+    "border-top: 1px solid rgba(80, 100, 130, 0.3)",
+    "font-size: 11px"
+  ].join(";");
+
+  var abilityName = document.createElement("div");
+  abilityName.textContent = "[Q] " + cls.ability.name;
+  abilityName.style.color = cls.color;
+  abilityName.style.fontWeight = "bold";
+  abilityName.style.marginBottom = "2px";
+  abilityRow.appendChild(abilityName);
+
+  var abilityDesc = document.createElement("div");
+  abilityDesc.textContent = cls.ability.description;
+  abilityDesc.style.color = "#667788";
+  abilityRow.appendChild(abilityDesc);
+
+  card.appendChild(abilityRow);
+
+  card.addEventListener("click", function () {
+    if (onSelectCallback) onSelectCallback(cls.key);
+  });
+
+  return card;
+}
+
+export function showShipSelectScreen(callback) {
+  onSelectCallback = callback;
+  if (overlay) overlay.style.display = "flex";
+}
+
+export function hideShipSelectScreen() {
+  if (overlay) overlay.style.display = "none";
+}
+
+export function isShipSelectVisible() {
+  return overlay && overlay.style.display !== "none";
+}
