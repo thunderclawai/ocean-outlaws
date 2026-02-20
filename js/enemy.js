@@ -11,6 +11,9 @@ var FIRE_COOLDOWN = 2.0;       // seconds between enemy shots
 var ENEMY_PROJ_SPEED = 40;
 var ENEMY_PROJ_GRAVITY = 9.8;
 var FLOAT_OFFSET = 1.0;
+var BUOYANCY_LERP = 8;
+var TILT_LERP = 6;
+var TILT_DAMPING = 0.3;        // gentle tilt, not wild rotation
 
 // spawn tuning
 var SPAWN_DIST_MIN = 80;
@@ -194,7 +197,11 @@ function spawnEnemy(manager, playerX, playerZ, scene, waveConfig) {
     fireTimer: 1 + Math.random() * 2,
     // destruction state
     sinking: false,
-    sinkTimer: 0
+    sinkTimer: 0,
+    // smoothed buoyancy state
+    _smoothY: 0.3,
+    _smoothPitch: 0,
+    _smoothRoll: 0
   };
 
   manager.enemies.push(enemy);
@@ -290,10 +297,28 @@ export function updateEnemies(manager, ship, dt, scene, getWaveHeight, elapsed, 
     e.mesh.position.z = e.posZ;
     e.mesh.rotation.y = e.heading;
 
-    // buoyancy
+    // buoyancy — smooth Y + pitch/roll from wave surface normal
     if (getWaveHeight) {
-      var waveY = getWaveHeight(e.posX, e.posZ, elapsed);
-      e.mesh.position.y = waveY + FLOAT_OFFSET;
+      var targetY = getWaveHeight(e.posX, e.posZ, elapsed) + FLOAT_OFFSET;
+
+      var sampleDist = 1.2;
+      var waveFore = getWaveHeight(e.posX + Math.sin(e.heading) * sampleDist, e.posZ + Math.cos(e.heading) * sampleDist, elapsed);
+      var waveAft  = getWaveHeight(e.posX - Math.sin(e.heading) * sampleDist, e.posZ - Math.cos(e.heading) * sampleDist, elapsed);
+      var wavePort = getWaveHeight(e.posX + Math.cos(e.heading) * sampleDist, e.posZ - Math.sin(e.heading) * sampleDist, elapsed);
+      var waveStbd = getWaveHeight(e.posX - Math.cos(e.heading) * sampleDist, e.posZ + Math.sin(e.heading) * sampleDist, elapsed);
+
+      var targetPitch = Math.atan2(waveFore - waveAft, sampleDist * 2) * TILT_DAMPING;
+      var targetRoll  = Math.atan2(wavePort - waveStbd, sampleDist * 2) * TILT_DAMPING;
+
+      var lerpFactor = 1 - Math.exp(-BUOYANCY_LERP * dt);
+      var tiltFactor = 1 - Math.exp(-TILT_LERP * dt);
+      e._smoothY += (targetY - e._smoothY) * lerpFactor;
+      e._smoothPitch += (targetPitch - e._smoothPitch) * tiltFactor;
+      e._smoothRoll += (targetRoll - e._smoothRoll) * tiltFactor;
+
+      e.mesh.position.y = e._smoothY;
+      e.mesh.rotation.x = e._smoothPitch;
+      e.mesh.rotation.z = e._smoothRoll;
     }
 
     // aim turret at player

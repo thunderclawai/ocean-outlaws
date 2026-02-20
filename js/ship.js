@@ -10,6 +10,8 @@ var REVERSE_ACCEL_RATIO = 0.5;  // reverse accel as fraction of forward accel
 var DRAG = 4;
 var TURN_SPEED_HIGH_RATIO = 0.36; // turn rate at max speed as ratio of base turn rate
 var FLOAT_OFFSET = 1.2;
+var BUOYANCY_LERP = 8;        // Y position smoothing speed (higher = tighter tracking)
+var TILT_LERP = 6;            // pitch/roll smoothing speed
 
 // --- auto-nav tuning ---
 var NAV_ARRIVE_RADIUS = 3;
@@ -111,7 +113,11 @@ export function createShip(classConfig) {
     // base stats from class (or defaults)
     baseMaxSpeed: stats ? stats.maxSpeed : DEFAULT_MAX_SPEED,
     baseAccel: stats ? stats.accel : DEFAULT_ACCEL,
-    baseTurnRate: stats ? stats.turnRate : DEFAULT_TURN_RATE
+    baseTurnRate: stats ? stats.turnRate : DEFAULT_TURN_RATE,
+    // smoothed buoyancy state
+    _smoothY: 0,
+    _smoothPitch: 0,
+    _smoothRoll: 0
   };
 
   return state;
@@ -209,8 +215,7 @@ export function updateShip(ship, input, dt, getWaveHeight, elapsed, fuelMult, up
   ship.mesh.rotation.y = ship.heading;
 
   if (getWaveHeight) {
-    var waveY = getWaveHeight(ship.posX, ship.posZ, elapsed);
-    ship.mesh.position.y = waveY + FLOAT_OFFSET;
+    var targetY = getWaveHeight(ship.posX, ship.posZ, elapsed) + FLOAT_OFFSET;
 
     var sampleDist = 1.5;
     var waveFore = getWaveHeight(ship.posX + Math.sin(ship.heading) * sampleDist, ship.posZ + Math.cos(ship.heading) * sampleDist, elapsed);
@@ -218,11 +223,19 @@ export function updateShip(ship, input, dt, getWaveHeight, elapsed, fuelMult, up
     var wavePort = getWaveHeight(ship.posX + Math.cos(ship.heading) * sampleDist, ship.posZ - Math.sin(ship.heading) * sampleDist, elapsed);
     var waveStbd = getWaveHeight(ship.posX - Math.cos(ship.heading) * sampleDist, ship.posZ + Math.sin(ship.heading) * sampleDist, elapsed);
 
-    var pitch = Math.atan2(waveFore - waveAft, sampleDist * 2) * 0.3;
-    var roll  = Math.atan2(wavePort - waveStbd, sampleDist * 2) * 0.3;
+    var targetPitch = Math.atan2(waveFore - waveAft, sampleDist * 2) * 0.3;
+    var targetRoll  = Math.atan2(wavePort - waveStbd, sampleDist * 2) * 0.3;
 
-    ship.mesh.rotation.x = pitch;
-    ship.mesh.rotation.z = roll;
+    // smooth interpolation to prevent jitter and snapping
+    var lerpFactor = 1 - Math.exp(-BUOYANCY_LERP * dt);
+    var tiltFactor = 1 - Math.exp(-TILT_LERP * dt);
+    ship._smoothY += (targetY - ship._smoothY) * lerpFactor;
+    ship._smoothPitch += (targetPitch - ship._smoothPitch) * tiltFactor;
+    ship._smoothRoll += (targetRoll - ship._smoothRoll) * tiltFactor;
+
+    ship.mesh.position.y = ship._smoothY;
+    ship.mesh.rotation.x = ship._smoothPitch;
+    ship.mesh.rotation.z = ship._smoothRoll;
   }
 }
 

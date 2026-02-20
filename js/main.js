@@ -264,12 +264,13 @@ function animate() {
     mults.windZ = wp.windZ;
     var waveAmp = wp.waveAmplitude;
     var weatherWaveHeight = function (wx, wz, wt) { return getWaveHeight(wx, wz, wt, waveAmp); };
-    updateShip(ship, input, dt, weatherWaveHeight, elapsed, fuelMult, mults);
-    var speedRatio = getSpeedRatio(ship);
-    consumeFuel(resources, speedRatio, dt);
+    // ocean must update before ships so wave height is current-frame
     updateOcean(ocean.uniforms, elapsed, wp.waveAmplitude, wp.waterTint);
     updateWeather(weather, dt, scene, ship.posX, ship.posZ);
     maybeChangeWeather(weather);
+    updateShip(ship, input, dt, weatherWaveHeight, elapsed, fuelMult, mults);
+    var speedRatio = getSpeedRatio(ship);
+    consumeFuel(resources, speedRatio, dt);
     updateNav(ship, elapsed);
     updateCamera(cam, dt, ship.posX, ship.posZ);
     // auto-targeting: acquire nearest enemy if no combat target
