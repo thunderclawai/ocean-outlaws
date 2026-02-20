@@ -22,6 +22,8 @@ import { loadMapState, getZone, calcStars, completeZone, buildZoneWaveConfigs, s
 import { createWeather, setWeather, getWeatherPreset, getWeatherLabel, maybeChangeWeather, createRain, updateWeather } from "./weather.js";
 import { createBoss, updateBoss, removeBoss, rollBossLoot, applyBossLoot } from "./boss.js";
 import { createBossHud, showBossHud, hideBossHud, updateBossHud, showLootBanner } from "./bossHud.js";
+import { createCrewState, resetCrew, generateOfficerReward, addOfficer, getCrewBonuses } from "./crew.js";
+import { createCrewScreen, showCrewScreen, hideCrewScreen } from "./crewScreen.js";
 
 // --- salvage tuning ---
 var SALVAGE_PER_KILL = 10;
@@ -69,6 +71,7 @@ var gameFrozen = true;    // start frozen until class selected
 var upgradeScreenOpen = false;
 var gameStarted = false;
 var activeBoss = null;    // current boss instance (or null)
+var crewScreenOpen = false;
 
 // --- strategic map state ---
 var mapState = loadMapState();
@@ -89,6 +92,10 @@ var droneMgr = createDroneManager();
 // --- upgrade system ---
 var upgrades = createUpgradeState();
 createUpgradeScreen();
+
+// --- crew system ---
+var crew = createCrewState();
+createCrewScreen();
 
 // wire enemy death → pickup spawn + salvage
 setOnDeathCallback(enemyMgr, function (x, y, z) {
@@ -147,6 +154,7 @@ function startZoneCombat(classKey, zoneId) {
   resetEnemyManager(enemyMgr, scene);
   resetUpgrades(upgrades);
   resetDrones(droneMgr, scene);
+  resetCrew(crew);
   if (activeBoss) { removeBoss(activeBoss, scene); activeBoss = null; }
   hideBossHud();
 
@@ -253,6 +261,7 @@ setRestartCallback(function () {
   resetEnemyManager(enemyMgr, scene);
   resetUpgrades(upgrades);
   resetDrones(droneMgr, scene);
+  resetCrew(crew);
   if (activeBoss) { removeBoss(activeBoss, scene); activeBoss = null; }
   hideBossHud();
   if (ship) {
@@ -269,8 +278,10 @@ setRestartCallback(function () {
     weapons.cooldown = 0;
   }
   upgradeScreenOpen = false;
+  crewScreenOpen = false;
   setWeather(weather, "calm");
   hideUpgradeScreen();
+  hideCrewScreen();
   hideOverlay();
   openMap();
 });
@@ -294,8 +305,16 @@ function animate() {
   var input = getInput();
   var mouse = getMouse();
 
-  if (!gameFrozen && !upgradeScreenOpen && gameStarted) {
+  if (!gameFrozen && !upgradeScreenOpen && !crewScreenOpen && gameStarted) {
     var mults = getMultipliers(upgrades);
+
+    // apply crew bonuses on top of upgrade multipliers
+    var crewBonus = getCrewBonuses(crew);
+    mults = Object.assign({}, mults);
+    mults.fireRate = mults.fireRate * crewBonus.fireRate;
+    mults.maxSpeed = mults.maxSpeed * crewBonus.maxSpeed;
+    mults.turnRate = mults.turnRate * crewBonus.turnRate;
+    mults.repair = mults.repair * crewBonus.repair;
 
     // ability activation (Q key)
     if (consumeAbility() && abilityState) {
@@ -394,6 +413,10 @@ function animate() {
         showLootBanner(loot.label);
         showBanner("BOSS DEFEATED!", 3);
         hideBossHud();
+        // boss defeat: award a rank 2-3 officer
+        var bossOfficer = generateOfficerReward(Math.random() < 0.5 ? 2 : 3);
+        addOfficer(crew, bossOfficer);
+        showBanner("Officer recruited: " + bossOfficer.portrait + " " + bossOfficer.name, 4);
       }
     }
 
@@ -433,11 +456,22 @@ function animate() {
           activeBoss = null;
           hideBossHud();
         }
+        // wave completion: chance to recruit an officer
+        if (Math.random() < 0.5) {
+          var waveOfficer = generateOfficerReward(1);
+          addOfficer(crew, waveOfficer);
+          showBanner("Officer recruited: " + waveOfficer.portrait + " " + waveOfficer.name, 3);
+        }
         if (waveMgr.wave < waveMgr.maxWave) {
           upgradeScreenOpen = true;
           showUpgradeScreen(upgrades, function () {
             upgradeScreenOpen = false;
             applyUpgrades();
+            // show crew screen after upgrades
+            crewScreenOpen = true;
+            showCrewScreen(crew, function () {
+              crewScreenOpen = false;
+            });
           });
         }
       } else if (event === "game_over") {
