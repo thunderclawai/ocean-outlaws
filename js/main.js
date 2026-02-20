@@ -2,10 +2,10 @@ import * as THREE from "three";
 import { createOcean, updateOcean, getWaveHeight } from "./ocean.js";
 import { createCamera, updateCamera, resizeCamera } from "./camera.js";
 import { createShip, updateShip, getSpeedRatio, getDisplaySpeed } from "./ship.js";
-import { initInput, getInput, getMouse, consumeFire } from "./input.js";
+import { initInput, getInput, getMouse, consumeFire, consumeWeaponSwitch } from "./input.js";
 import { createHUD, updateHUD, showBanner, showGameOver, showVictory, setRestartCallback, hideOverlay } from "./hud.js";
 import { initNav, updateNav } from "./nav.js";
-import { createTurretSystem, aimTurrets, fire, updateTurrets, screenToWorld } from "./turret.js";
+import { createWeaponState, aimWeapons, fireWeapon, updateWeapons, screenToWorld, switchWeapon, getActiveWeapon, getWeaponOrder, getWeaponConfig } from "./weapon.js";
 import { createEnemyManager, updateEnemies, getPlayerHp, setOnDeathCallback, setPlayerHp, setPlayerArmor, setPlayerMaxHp, resetEnemyManager } from "./enemy.js";
 import { initHealthBars, updateHealthBars } from "./health.js";
 import { createResources, consumeFuel, getFuelSpeedMult, resetResources } from "./resource.js";
@@ -73,11 +73,8 @@ var waveMgr = createWaveManager();
 // --- input ---
 initInput();
 
-// --- turret system ---
-var turrets = createTurretSystem(ship);
-// sync turret display with resource ammo
-turrets.ammo = resources.ammo;
-turrets.maxAmmo = resources.maxAmmo;
+// --- weapon system ---
+var weapons = createWeaponState(ship);
 
 // --- HUD ---
 createHUD();
@@ -121,8 +118,10 @@ setRestartCallback(function () {
   ship.speed = 0;
   ship.heading = 0;
   ship.navTarget = null;
-  turrets.ammo = resources.ammo;
-  turrets.maxAmmo = resources.maxAmmo;
+  weapons.activeWeapon = 0;
+  weapons.projectiles = [];
+  weapons.effects = [];
+  weapons.cooldown = 0;
   gameFrozen = false;
   upgradeScreenOpen = false;
   hideUpgradeScreen();
@@ -170,20 +169,26 @@ function animate() {
     updateNav(ship, elapsed);
     updateCamera(cam, dt, ship.posX, ship.posZ);
 
+    // weapon switching (number keys 1-2-3)
+    var weaponSwitchIdx = consumeWeaponSwitch();
+    if (weaponSwitchIdx >= 0) {
+      switchWeapon(weapons, weaponSwitchIdx);
+    }
+
     // aim turrets toward mouse/touch position projected onto water plane
     var aimTarget = screenToWorld(mouse.x, mouse.y, cam.camera);
     if (aimTarget) {
-      aimTurrets(turrets, aimTarget);
+      aimWeapons(weapons, aimTarget);
     }
 
     // fire on click/tap (using resource ammo)
     if (mouse.firePressed && !mouse.fireConsumed) {
-      fire(turrets, scene, resources, mults);
+      fireWeapon(weapons, scene, resources, mults);
       consumeFire();
     }
 
     // update projectiles, effects, hit detection
-    updateTurrets(turrets, dt, scene, enemyMgr);
+    updateWeapons(weapons, dt, scene, enemyMgr);
 
     // get current wave config for enemy scaling
     var waveConfig = getWaveConfig(waveMgr);
@@ -231,14 +236,21 @@ function animate() {
       }
     }
 
-    // sync turret ammo display with resources
-    turrets.ammo = resources.ammo;
-    turrets.maxAmmo = resources.maxAmmo;
-
     // health bars above ships
     updateHealthBars(cam.camera, enemyMgr.enemies, ship, hpInfo.hp, hpInfo.maxHp);
 
     var waveState = getWaveState(waveMgr);
+
+    // build weapon info for HUD
+    var weaponOrder = getWeaponOrder();
+    var ammoCosts = [];
+    for (var wi = 0; wi < weaponOrder.length; wi++) {
+      ammoCosts.push(getWeaponConfig(weaponOrder[wi]).ammoCost);
+    }
+    var weaponInfo = {
+      activeIndex: weapons.activeWeapon,
+      ammoCosts: ammoCosts
+    };
 
     updateHUD(
       speedRatio, getDisplaySpeed(ship), ship.heading,
@@ -247,7 +259,7 @@ function animate() {
       resources.fuel, resources.maxFuel,
       resources.parts,
       waveMgr.wave, waveState, dt,
-      upgrades.salvage
+      upgrades.salvage, weaponInfo
     );
   } else {
     // still render ocean and camera when frozen
