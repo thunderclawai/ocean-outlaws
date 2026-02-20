@@ -20,6 +20,7 @@ var abilityBarBg = null;
 var abilityBar = null;
 var abilityStatus = null;
 var weatherLabel = null;
+var portLabel = null;
 var autofireLabel = null;
 var onWeaponSwitchCallback = null;
 var onAbilityCallback = null;
@@ -229,6 +230,13 @@ export function createHUD() {
   weatherLabel.style.fontSize = "12px";
   weatherLabel.style.color = "#667788";
   container.appendChild(weatherLabel);
+
+  portLabel = document.createElement("div");
+  portLabel.textContent = "";
+  portLabel.style.marginTop = "6px";
+  portLabel.style.fontSize = "12px";
+  portLabel.style.color = "#44ff88";
+  container.appendChild(portLabel);
   document.body.appendChild(container);
 
   banner = document.createElement("div");
@@ -321,7 +329,7 @@ export function hideOverlay() {
   overlay.style.display = "none";
 }
 
-export function updateHUD(speedRatio, displaySpeed, heading, ammo, maxAmmo, hp, maxHp, fuel, maxFuel, parts, wave, waveState, dt, salvage, weaponInfo, abilityInfo, weatherText, autofireOn) {
+export function updateHUD(speedRatio, displaySpeed, heading, ammo, maxAmmo, hp, maxHp, fuel, maxFuel, parts, wave, waveState, dt, salvage, weaponInfo, abilityInfo, weatherText, autofireOn, portInfo) {
   if (!container) return;
   var pct = Math.min(1, speedRatio) * 100;
   speedBar.style.width = pct + "%";
@@ -424,6 +432,19 @@ export function updateHUD(speedRatio, displaySpeed, heading, ammo, maxAmmo, hp, 
       autofireLabel.textContent = "AUTOFIRE: OFF [F]";
       autofireLabel.style.color = "#667788";
       autofireLabel.style.borderColor = "rgba(80,100,130,0.5)";
+    }
+  }
+  if (portLabel) {
+    if (portInfo && portInfo.dist < 50) {
+      if (portInfo.available) {
+        portLabel.textContent = "PORT: " + Math.round(portInfo.dist) + "m";
+        portLabel.style.color = "#44ff88";
+      } else {
+        portLabel.textContent = "PORT: " + Math.ceil(portInfo.cooldown) + "s";
+        portLabel.style.color = "#884422";
+      }
+    } else {
+      portLabel.textContent = "";
     }
   }
   updateBanner(dt || 0.016);
