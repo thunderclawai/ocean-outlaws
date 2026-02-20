@@ -1,5 +1,5 @@
 // upgradeScreen.js — between-wave upgrade UI overlay with ship diagram
-import { getUpgradeTree, canAfford, buyUpgrade, getNextCost, getMultipliers } from "./upgrade.js";
+import { getUpgradeTree, canAfford, buyUpgrade, getNextCost, getMultipliers, getMultiplierForKey, findUpgrade } from "./upgrade.js";
 
 var root = null;
 var salvageLabel = null;
@@ -7,6 +7,24 @@ var categoryEls = {};
 var onCloseCallback = null;
 var currentState = null;
 var continueBtn = null;
+var selectedKey = null;   // currently previewed upgrade key
+var previewPanel = null;  // stat preview panel element
+
+// --- stat display names ---
+var STAT_LABELS = {
+  damage: "Damage",
+  fireRate: "Fire Rate",
+  projSpeed: "Proj Speed",
+  maxSpeed: "Max Speed",
+  turnRate: "Turn Rate",
+  accel: "Acceleration",
+  maxHp: "Max HP",
+  armor: "Armor",
+  repair: "Repair Eff.",
+  enemyRange: "Enemy Range",
+  pickupRange: "Pickup Range",
+  minimap: "Minimap"
+};
 
 // --- create the upgrade screen DOM (called once) ---
 export function createUpgradeScreen() {
@@ -75,6 +93,23 @@ export function createUpgradeScreen() {
     var panel = buildCategoryPanel(catKey, cat);
     body.appendChild(panel);
   }
+
+  // stat preview panel (below the grid, above continue)
+  previewPanel = document.createElement("div");
+  previewPanel.style.cssText = [
+    "max-width: 400px",
+    "width: 90%",
+    "min-height: 48px",
+    "margin-top: 12px",
+    "padding: 10px 16px",
+    "background: rgba(15, 20, 35, 0.9)",
+    "border: 1px solid rgba(80, 100, 130, 0.3)",
+    "border-radius: 6px",
+    "display: none",
+    "flex-direction: column",
+    "gap: 6px"
+  ].join(";");
+  root.appendChild(previewPanel);
 
   // continue button
   continueBtn = document.createElement("button");
@@ -196,7 +231,6 @@ function buildCategoryPanel(catKey, cat) {
   var upgradeEls = [];
   for (var u = 0; u < cat.upgrades.length; u++) {
     var up = cat.upgrades[u];
-    // skip placeholder upgrades with 0 cost at tier 0
     var row = buildUpgradeRow(up, cat.color);
     panel.appendChild(row.el);
     upgradeEls.push(row);
@@ -206,6 +240,123 @@ function buildCategoryPanel(catKey, cat) {
   return panel;
 }
 
+// --- format a multiplier value for display ---
+function formatStat(key, value) {
+  if (key === "armor") return Math.round(value * 100) + "%";
+  if (key === "minimap") return value >= 1 ? "ON" : "OFF";
+  // display multiplier as percentage
+  return (value * 100).toFixed(0) + "%";
+}
+
+// --- select an upgrade for preview ---
+function selectUpgrade(key) {
+  if (selectedKey === key) {
+    // deselect
+    selectedKey = null;
+    refreshPreview();
+    refreshUI();
+    return;
+  }
+  selectedKey = key;
+  refreshPreview();
+  refreshUI();
+}
+
+// --- refresh the preview panel ---
+function refreshPreview() {
+  if (!previewPanel || !currentState) return;
+
+  // clear
+  previewPanel.innerHTML = "";
+
+  if (!selectedKey) {
+    previewPanel.style.display = "none";
+    return;
+  }
+
+  var info = findUpgrade(selectedKey);
+  if (!info) { previewPanel.style.display = "none"; return; }
+
+  var level = currentState.levels[selectedKey] || 0;
+  var cost = getNextCost(currentState, selectedKey);
+  var affordable = canAfford(currentState, selectedKey);
+  var maxed = level >= 3;
+
+  previewPanel.style.display = "flex";
+
+  // upgrade name header
+  var header = document.createElement("div");
+  header.textContent = info.label + (maxed ? " (MAX)" : " — Tier " + (level + 1));
+  header.style.cssText = "font-size:14px;font-weight:bold;color:#aabbcc;margin-bottom:4px";
+  previewPanel.appendChild(header);
+
+  if (!maxed && cost > 0) {
+    // stat preview: current → new
+    var currentVal = getMultiplierForKey(currentState, selectedKey, 0);
+    var newVal = getMultiplierForKey(currentState, selectedKey, 1);
+    var statLabel = STAT_LABELS[info.stat] || info.stat;
+
+    var statRow = document.createElement("div");
+    statRow.style.cssText = "font-size:13px;color:#8899aa;display:flex;align-items:center;gap:6px";
+
+    var statName = document.createElement("span");
+    statName.textContent = statLabel + ": ";
+    statName.style.color = "#667788";
+    statRow.appendChild(statName);
+
+    var currentSpan = document.createElement("span");
+    currentSpan.textContent = formatStat(info.stat, currentVal);
+    currentSpan.style.color = "#aabbcc";
+    statRow.appendChild(currentSpan);
+
+    var arrow = document.createElement("span");
+    arrow.textContent = " \u2192 ";
+    arrow.style.color = "#556677";
+    statRow.appendChild(arrow);
+
+    var newSpan = document.createElement("span");
+    newSpan.textContent = formatStat(info.stat, newVal);
+    newSpan.style.cssText = "color:#44dd66;font-weight:bold";
+    statRow.appendChild(newSpan);
+
+    previewPanel.appendChild(statRow);
+
+    // cost line
+    var costLine = document.createElement("div");
+    costLine.textContent = "Cost: " + cost + " salvage";
+    costLine.style.cssText = "font-size:12px;color:" + (affordable ? "#ffcc44" : "#664422") + ";margin-top:2px";
+    previewPanel.appendChild(costLine);
+
+    // apply button
+    var applyBtn = document.createElement("button");
+    applyBtn.textContent = "APPLY";
+    applyBtn.style.cssText = [
+      "font-family: monospace",
+      "font-size: 13px",
+      "padding: 6px 24px",
+      "margin-top: 6px",
+      "background: " + (affordable ? "rgba(40, 80, 60, 0.8)" : "rgba(40, 40, 50, 0.6)"),
+      "color: " + (affordable ? "#44dd66" : "#556677"),
+      "border: 1px solid " + (affordable ? "rgba(60, 140, 90, 0.6)" : "rgba(60, 60, 70, 0.3)"),
+      "border-radius: 4px",
+      "cursor: " + (affordable ? "pointer" : "default"),
+      "pointer-events: auto",
+      "align-self: flex-start"
+    ].join(";");
+    applyBtn.disabled = !affordable;
+
+    applyBtn.addEventListener("click", function () {
+      if (!currentState || !selectedKey) return;
+      if (buyUpgrade(currentState, selectedKey)) {
+        refreshUI();
+        refreshPreview();
+      }
+    });
+
+    previewPanel.appendChild(applyBtn);
+  }
+}
+
 // --- build a single upgrade row ---
 function buildUpgradeRow(up, color) {
   var el = document.createElement("div");
@@ -213,7 +364,9 @@ function buildUpgradeRow(up, color) {
     "margin-bottom: 8px",
     "padding: 6px",
     "border-radius: 4px",
-    "background: rgba(20, 25, 40, 0.6)"
+    "background: rgba(20, 25, 40, 0.6)",
+    "cursor: pointer",
+    "transition: background 0.15s"
   ].join(";");
 
   // label
@@ -240,44 +393,21 @@ function buildUpgradeRow(up, color) {
   }
   el.appendChild(pips);
 
-  // cost + buy button
-  var costRow = document.createElement("div");
-  costRow.style.cssText = "display:flex;justify-content:space-between;align-items:center";
-
-  var costLabel = document.createElement("span");
+  // cost label (no buy button — clicking the row selects for preview)
+  var costLabel = document.createElement("div");
   costLabel.style.cssText = "font-size:11px;color:#667788";
-  costRow.appendChild(costLabel);
+  el.appendChild(costLabel);
 
-  var btn = document.createElement("button");
-  btn.textContent = "BUY";
-  btn.style.cssText = [
-    "font-family: monospace",
-    "font-size: 11px",
-    "padding: 2px 10px",
-    "background: rgba(40, 60, 90, 0.6)",
-    "color: #8899aa",
-    "border: 1px solid rgba(80, 100, 130, 0.4)",
-    "border-radius: 3px",
-    "cursor: pointer",
-    "pointer-events: auto"
-  ].join(";");
-
-  btn.addEventListener("click", function () {
-    if (!currentState) return;
-    if (buyUpgrade(currentState, up.key)) {
-      refreshUI();
-    }
+  // click to select for preview
+  el.addEventListener("click", function () {
+    selectUpgrade(up.key);
   });
-
-  costRow.appendChild(btn);
-  el.appendChild(costRow);
 
   return {
     el: el,
     key: up.key,
     pipEls: pipEls,
     costLabel: costLabel,
-    btn: btn,
     color: color
   };
 }
@@ -301,6 +431,7 @@ function refreshUI() {
       var level = currentState.levels[row.key] || 0;
       var cost = getNextCost(currentState, row.key);
       var affordable = canAfford(currentState, row.key);
+      var isSelected = selectedKey === row.key;
 
       // update pips
       for (var t = 0; t < 3; t++) {
@@ -313,22 +444,25 @@ function refreshUI() {
         }
       }
 
-      // update cost and button
+      // highlight selected row
+      if (isSelected) {
+        row.el.style.background = "rgba(40, 55, 80, 0.8)";
+        row.el.style.outline = "1px solid " + row.color + "66";
+      } else {
+        row.el.style.background = "rgba(20, 25, 40, 0.6)";
+        row.el.style.outline = "none";
+      }
+
+      // update cost display
       if (level >= 3) {
         row.costLabel.textContent = "MAX";
         row.costLabel.style.color = row.color;
-        row.btn.style.display = "none";
       } else if (cost <= 0) {
         row.costLabel.textContent = "N/A";
         row.costLabel.style.color = "#445566";
-        row.btn.style.display = "none";
       } else {
         row.costLabel.textContent = cost + " salvage";
         row.costLabel.style.color = affordable ? "#aabbcc" : "#556677";
-        row.btn.style.display = "inline-block";
-        row.btn.disabled = !affordable;
-        row.btn.style.opacity = affordable ? "1" : "0.4";
-        row.btn.style.cursor = affordable ? "pointer" : "default";
       }
     }
   }
@@ -339,7 +473,9 @@ export function showUpgradeScreen(upgradeState, closeCb) {
   if (!root) return;
   currentState = upgradeState;
   onCloseCallback = closeCb;
+  selectedKey = null;
   refreshUI();
+  refreshPreview();
   root.style.display = "flex";
 }
 
@@ -348,6 +484,7 @@ export function hideUpgradeScreen() {
   if (!root) return;
   root.style.display = "none";
   currentState = null;
+  selectedKey = null;
 }
 
 // --- is upgrade screen visible? ---

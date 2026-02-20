@@ -1,8 +1,12 @@
 // shipSelect.js — ship class selection screen before game start
 import { getClassOrder, getAllClasses } from "./shipClass.js";
+import { getTotalSpent, respecUpgrades } from "./upgrade.js";
 
 var overlay = null;
 var onSelectCallback = null;
+var resetBtn = null;
+var confirmDialog = null;
+var currentUpgradeState = null;
 
 export function createShipSelectScreen() {
   overlay = document.createElement("div");
@@ -62,7 +66,133 @@ export function createShipSelectScreen() {
   ].join(";");
   overlay.appendChild(hint);
 
+  // reset upgrades button
+  resetBtn = document.createElement("button");
+  resetBtn.textContent = "RESET UPGRADES";
+  resetBtn.style.cssText = [
+    "font-family: monospace",
+    "font-size: 14px",
+    "padding: 10px 28px",
+    "margin-top: 16px",
+    "background: rgba(80, 30, 30, 0.7)",
+    "color: #cc6666",
+    "border: 1px solid rgba(160, 60, 60, 0.5)",
+    "border-radius: 6px",
+    "cursor: pointer",
+    "pointer-events: auto",
+    "display: none"
+  ].join(";");
+  resetBtn.addEventListener("click", function () {
+    showResetConfirm();
+  });
+  overlay.appendChild(resetBtn);
+
+  // confirmation dialog (hidden by default)
+  confirmDialog = document.createElement("div");
+  confirmDialog.style.cssText = [
+    "position: fixed",
+    "top: 0", "left: 0",
+    "width: 100%", "height: 100%",
+    "display: none",
+    "align-items: center",
+    "justify-content: center",
+    "background: rgba(0, 0, 0, 0.7)",
+    "z-index: 210",
+    "font-family: monospace"
+  ].join(";");
+
+  var dialogBox = document.createElement("div");
+  dialogBox.style.cssText = [
+    "background: rgba(15, 20, 35, 0.95)",
+    "border: 1px solid rgba(160, 60, 60, 0.5)",
+    "border-radius: 8px",
+    "padding: 24px 32px",
+    "text-align: center",
+    "max-width: 350px"
+  ].join(";");
+
+  var dialogText = document.createElement("div");
+  dialogText.textContent = "Are you sure? This resets all upgrades.";
+  dialogText.style.cssText = "font-size:15px;color:#cc9999;margin-bottom:20px";
+  dialogBox.appendChild(dialogText);
+
+  var dialogRefund = document.createElement("div");
+  dialogRefund.id = "reset-refund-label";
+  dialogRefund.style.cssText = "font-size:13px;color:#ffcc44;margin-bottom:16px";
+  dialogBox.appendChild(dialogRefund);
+
+  var btnRow = document.createElement("div");
+  btnRow.style.cssText = "display:flex;gap:12px;justify-content:center";
+
+  var confirmBtn = document.createElement("button");
+  confirmBtn.textContent = "CONFIRM RESET";
+  confirmBtn.style.cssText = [
+    "font-family: monospace",
+    "font-size: 13px",
+    "padding: 8px 20px",
+    "background: rgba(120, 30, 30, 0.8)",
+    "color: #ff6666",
+    "border: 1px solid rgba(200, 60, 60, 0.6)",
+    "border-radius: 4px",
+    "cursor: pointer",
+    "pointer-events: auto"
+  ].join(";");
+  confirmBtn.addEventListener("click", function () {
+    if (currentUpgradeState) {
+      respecUpgrades(currentUpgradeState);
+    }
+    hideResetConfirm();
+    updateResetButton();
+  });
+  btnRow.appendChild(confirmBtn);
+
+  var cancelBtn = document.createElement("button");
+  cancelBtn.textContent = "CANCEL";
+  cancelBtn.style.cssText = [
+    "font-family: monospace",
+    "font-size: 13px",
+    "padding: 8px 20px",
+    "background: rgba(40, 50, 70, 0.8)",
+    "color: #8899aa",
+    "border: 1px solid rgba(80, 100, 130, 0.4)",
+    "border-radius: 4px",
+    "cursor: pointer",
+    "pointer-events: auto"
+  ].join(";");
+  cancelBtn.addEventListener("click", function () {
+    hideResetConfirm();
+  });
+  btnRow.appendChild(cancelBtn);
+
+  dialogBox.appendChild(btnRow);
+  confirmDialog.appendChild(dialogBox);
+  document.body.appendChild(confirmDialog);
+
   document.body.appendChild(overlay);
+}
+
+function showResetConfirm() {
+  if (!confirmDialog || !currentUpgradeState) return;
+  var refund = getTotalSpent(currentUpgradeState);
+  var refundLabel = confirmDialog.querySelector("#reset-refund-label");
+  if (refundLabel) {
+    refundLabel.textContent = "Refund: " + refund + " salvage";
+  }
+  confirmDialog.style.display = "flex";
+}
+
+function hideResetConfirm() {
+  if (confirmDialog) confirmDialog.style.display = "none";
+}
+
+function updateResetButton() {
+  if (!resetBtn) return;
+  if (!currentUpgradeState) {
+    resetBtn.style.display = "none";
+    return;
+  }
+  var spent = getTotalSpent(currentUpgradeState);
+  resetBtn.style.display = spent > 0 ? "inline-block" : "none";
 }
 
 function buildCard(cls) {
@@ -164,13 +294,16 @@ function buildCard(cls) {
   return card;
 }
 
-export function showShipSelectScreen(callback) {
+export function showShipSelectScreen(callback, upgradeState) {
   onSelectCallback = callback;
+  currentUpgradeState = upgradeState || null;
+  updateResetButton();
   if (overlay) overlay.style.display = "flex";
 }
 
 export function hideShipSelectScreen() {
   if (overlay) overlay.style.display = "none";
+  hideResetConfirm();
 }
 
 export function isShipSelectVisible() {
