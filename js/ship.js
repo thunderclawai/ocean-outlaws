@@ -130,7 +130,9 @@ function normalizeAngle(a) {
 }
 
 // --- update ship physics ---
-export function updateShip(ship, input, dt, getWaveHeight, elapsed) {
+// fuelMult: 0-1 multiplier on max speed from fuel level (optional, defaults to 1)
+export function updateShip(ship, input, dt, getWaveHeight, elapsed, fuelMult) {
+  var effectiveMaxSpeed = MAX_SPEED * (fuelMult !== undefined ? fuelMult : 1);
   var wasdActive = input.forward || input.backward || input.left || input.right;
 
   // WASD overrides auto-nav
@@ -163,7 +165,7 @@ export function updateShip(ship, input, dt, getWaveHeight, elapsed) {
 
       // throttle — full speed far away, decelerate near target
       var speedFactor = Math.min(1, dist / NAV_SLOW_RADIUS);
-      var desiredSpeed = MAX_SPEED * speedFactor;
+      var desiredSpeed = effectiveMaxSpeed * speedFactor;
       // only accelerate when roughly facing target
       if (Math.abs(angleDiff) < Math.PI * 0.5) {
         if (ship.speed < desiredSpeed) {
@@ -199,7 +201,7 @@ export function updateShip(ship, input, dt, getWaveHeight, elapsed) {
     }
 
     // turning — interpolate turn rate based on speed ratio
-    var speedRatio = Math.abs(ship.speed) / MAX_SPEED;
+    var speedRatio = Math.abs(ship.speed) / effectiveMaxSpeed;
     var turnRate = TURN_SPEED_LOW + (TURN_SPEED_HIGH - TURN_SPEED_LOW) * speedRatio;
     var turnMult = Math.max(0.1, Math.min(1, Math.abs(ship.speed) / 5));
 
@@ -208,8 +210,8 @@ export function updateShip(ship, input, dt, getWaveHeight, elapsed) {
   }
 
   // clamp speed
-  var maxReverse = MAX_SPEED * 0.3;
-  ship.speed = Math.max(-maxReverse, Math.min(MAX_SPEED, ship.speed));
+  var maxReverse = effectiveMaxSpeed * 0.3;
+  ship.speed = Math.max(-maxReverse, Math.min(effectiveMaxSpeed, ship.speed));
 
   // movement
   ship.posX += Math.sin(ship.heading) * ship.speed * dt;

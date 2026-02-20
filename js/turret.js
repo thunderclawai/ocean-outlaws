@@ -1,6 +1,7 @@
 // turret.js — turret aiming, firing, projectile physics, hit detection, visual effects
 import * as THREE from "three";
 import { damageEnemy } from "./enemy.js";
+import { spendAmmo } from "./resource.js";
 
 // --- tuning ---
 var PROJECTILE_SPEED = 60;
@@ -51,6 +52,7 @@ export function createTurretSystem(ship) {
     effects: [],           // muzzle flashes, splashes
     ammo: AMMO_PER_WAVE,
     maxAmmo: AMMO_PER_WAVE,
+    shotCount: 0,          // total shots fired (for turret alternation)
     cooldown: 0,
     aimWorldPos: new THREE.Vector3(0, 0, 0)
   };
@@ -83,15 +85,25 @@ export function aimTurrets(turretState, worldTarget) {
 }
 
 // --- fire projectile from first available turret ---
-export function fire(turretState, scene) {
+export function fire(turretState, scene, resources) {
   if (turretState.cooldown > 0) return;
-  if (turretState.ammo <= 0) return;
 
-  turretState.ammo--;
+  // use resource system for ammo if available, else fallback to internal
+  if (resources) {
+    if (!spendAmmo(resources)) return;
+    // sync turret display state
+    turretState.ammo = resources.ammo;
+    turretState.maxAmmo = resources.maxAmmo;
+  } else {
+    if (turretState.ammo <= 0) return;
+    turretState.ammo--;
+  }
+
   turretState.cooldown = FIRE_COOLDOWN;
+  turretState.shotCount++;
 
   // alternate turrets
-  var turretIdx = (turretState.maxAmmo - turretState.ammo) % turretState.turretGroups.length;
+  var turretIdx = turretState.shotCount % turretState.turretGroups.length;
   var turret = turretState.turretGroups[turretIdx];
 
   // get barrel tip world position (barrel is at local z=0.35, plus half barrel length ~0.35)

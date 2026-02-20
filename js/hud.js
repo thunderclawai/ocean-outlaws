@@ -1,13 +1,18 @@
-// hud.js — speed indicator, compass, and ammo counter overlay
+// hud.js — speed indicator, compass, ammo counter, fuel gauge, parts count, wave info
 
 var container = null;
 var speedBar = null;
 var speedLabel = null;
 var compassLabel = null;
 var ammoLabel = null;
+var fuelBarBg = null;
+var fuelBar = null;
+var fuelLabel = null;
+var partsLabel = null;
 var hpBarBg = null;
 var hpBar = null;
 var hpLabel = null;
+var waveLabel = null;
 
 export function createHUD() {
   container = document.createElement("div");
@@ -67,6 +72,44 @@ export function createHUD() {
   ammoLabel.style.color = "#8899aa";
   container.appendChild(ammoLabel);
 
+  // fuel gauge
+  fuelLabel = document.createElement("div");
+  fuelLabel.textContent = "FUEL";
+  fuelLabel.style.marginTop = "8px";
+  fuelLabel.style.fontSize = "12px";
+  fuelLabel.style.color = "#667788";
+  container.appendChild(fuelLabel);
+
+  fuelBarBg = document.createElement("div");
+  fuelBarBg.style.cssText = [
+    "width: 120px",
+    "height: 8px",
+    "background: rgba(20, 30, 50, 0.7)",
+    "border: 1px solid rgba(80, 100, 130, 0.4)",
+    "border-radius: 4px",
+    "overflow: hidden",
+    "margin-top: 3px"
+  ].join(";");
+
+  fuelBar = document.createElement("div");
+  fuelBar.style.cssText = [
+    "width: 100%",
+    "height: 100%",
+    "background: #2288cc",
+    "border-radius: 3px",
+    "transition: width 0.2s"
+  ].join(";");
+  fuelBarBg.appendChild(fuelBar);
+  container.appendChild(fuelBarBg);
+
+  // parts count
+  partsLabel = document.createElement("div");
+  partsLabel.textContent = "PARTS: 0";
+  partsLabel.style.marginTop = "6px";
+  partsLabel.style.fontSize = "13px";
+  partsLabel.style.color = "#8899aa";
+  container.appendChild(partsLabel);
+
   // player HP bar
   hpLabel = document.createElement("div");
   hpLabel.textContent = "HP";
@@ -97,10 +140,19 @@ export function createHUD() {
   hpBarBg.appendChild(hpBar);
   container.appendChild(hpBarBg);
 
+  // wave indicator
+  waveLabel = document.createElement("div");
+  waveLabel.textContent = "WAVE 1";
+  waveLabel.style.marginTop = "10px";
+  waveLabel.style.fontSize = "14px";
+  waveLabel.style.color = "#8899aa";
+  waveLabel.style.fontWeight = "bold";
+  container.appendChild(waveLabel);
+
   document.body.appendChild(container);
 }
 
-export function updateHUD(speedRatio, displaySpeed, heading, ammo, maxAmmo, hp, maxHp) {
+export function updateHUD(speedRatio, displaySpeed, heading, ammo, maxAmmo, hp, maxHp, fuel, maxFuel, parts, wave, waveActive) {
   if (!container) return;
 
   var pct = Math.min(1, speedRatio) * 100;
@@ -116,7 +168,22 @@ export function updateHUD(speedRatio, displaySpeed, heading, ammo, maxAmmo, hp, 
   // ammo counter
   if (ammo !== undefined) {
     ammoLabel.textContent = "AMMO: " + ammo + " / " + maxAmmo;
-    ammoLabel.style.color = ammo <= 5 ? "#cc6644" : "#8899aa";
+    ammoLabel.style.color = ammo <= 5 ? "#cc6644" : ammo === 0 ? "#cc2222" : "#8899aa";
+  }
+
+  // fuel gauge
+  if (fuel !== undefined && fuelBar) {
+    var fuelPct = Math.max(0, fuel / maxFuel) * 100;
+    fuelBar.style.width = fuelPct + "%";
+    fuelBar.style.background = fuelPct > 30 ? "#2288cc" : fuelPct > 15 ? "#cc8822" : "#cc4444";
+    fuelLabel.textContent = "FUEL: " + Math.round(fuel) + "%";
+    fuelLabel.style.color = fuelPct > 15 ? "#667788" : "#cc4444";
+  }
+
+  // parts count
+  if (parts !== undefined && partsLabel) {
+    partsLabel.textContent = "PARTS: " + parts;
+    partsLabel.style.color = parts > 0 ? "#44dd66" : "#8899aa";
   }
 
   // player HP
@@ -126,5 +193,16 @@ export function updateHUD(speedRatio, displaySpeed, heading, ammo, maxAmmo, hp, 
     hpBar.style.background = hpPct > 50 ? "#44aa66" : hpPct > 25 ? "#aaaa44" : "#cc4444";
     hpLabel.textContent = "HP: " + hp + " / " + maxHp;
     hpLabel.style.color = hpPct > 25 ? "#667788" : "#cc4444";
+  }
+
+  // wave indicator
+  if (wave !== undefined && waveLabel) {
+    if (waveActive) {
+      waveLabel.textContent = "WAVE " + wave;
+      waveLabel.style.color = "#8899aa";
+    } else {
+      waveLabel.textContent = "REPAIRING...";
+      waveLabel.style.color = "#44dd66";
+    }
   }
 }
