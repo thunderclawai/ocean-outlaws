@@ -122,6 +122,7 @@ export function createEnemyManager() {
     elapsed: 0,
     playerHp: PLAYER_HP,
     playerMaxHp: PLAYER_HP,
+    playerArmor: 0,           // damage reduction 0-1 from upgrades
     onDeathCallback: null     // called with (x, y, z) when enemy destroyed
   };
 }
@@ -145,6 +146,7 @@ export function resetEnemyManager(manager, scene) {
   manager.spawnInterval = INITIAL_SPAWN_INTERVAL;
   manager.playerHp = PLAYER_HP;
   manager.playerMaxHp = PLAYER_HP;
+  manager.playerArmor = 0;
 }
 
 // --- set callback for enemy death (used for pickup spawning) ---
@@ -387,7 +389,8 @@ function updateEnemyProjectiles(manager, ship, dt, scene) {
     var pDistSq = pdx * pdx + pdz * pdz;
     if (pDistSq < 2.5 * 2.5) {
       hitPlayer = true;
-      manager.playerHp = Math.max(0, manager.playerHp - 1);
+      var incomingDmg = Math.max(0.1, 1 - (manager.playerArmor || 0));
+      manager.playerHp = Math.max(0, manager.playerHp - incomingDmg);
     }
 
     if (hitWater || outOfRange || hitPlayer) {
@@ -443,8 +446,11 @@ function updateParticles(manager, dt, scene) {
 }
 
 // --- called when an enemy is hit by player projectile ---
-export function damageEnemy(manager, enemy, scene) {
-  enemy.hp--;
+// damageMult: multiplier from upgrades (optional, defaults to 1)
+export function damageEnemy(manager, enemy, scene, damageMult) {
+  var dmg = Math.round(1 * (damageMult || 1));
+  if (dmg < 1) dmg = 1;
+  enemy.hp -= dmg;
   if (enemy.hp <= 0) {
     enemy.alive = false;
     enemy.sinking = true;
@@ -454,6 +460,16 @@ export function damageEnemy(manager, enemy, scene) {
       manager.onDeathCallback(enemy.posX, enemy.mesh.position.y, enemy.posZ);
     }
   }
+}
+
+// --- set player armor from upgrades ---
+export function setPlayerArmor(manager, armor) {
+  manager.playerArmor = armor;
+}
+
+// --- set player max HP from upgrades ---
+export function setPlayerMaxHp(manager, maxHp) {
+  manager.playerMaxHp = maxHp;
 }
 
 // --- get player hp info ---

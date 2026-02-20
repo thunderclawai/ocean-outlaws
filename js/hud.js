@@ -9,6 +9,7 @@ var fuelBarBg = null;
 var fuelBar = null;
 var fuelLabel = null;
 var partsLabel = null;
+var salvageLabel = null;
 var hpBarBg = null;
 var hpBar = null;
 var hpLabel = null;
@@ -118,6 +119,14 @@ export function createHUD() {
   partsLabel.style.fontSize = "13px";
   partsLabel.style.color = "#8899aa";
   container.appendChild(partsLabel);
+
+  // salvage count
+  salvageLabel = document.createElement("div");
+  salvageLabel.textContent = "SALVAGE: 0";
+  salvageLabel.style.marginTop = "4px";
+  salvageLabel.style.fontSize = "13px";
+  salvageLabel.style.color = "#ffcc44";
+  container.appendChild(salvageLabel);
 
   // player HP bar
   hpLabel = document.createElement("div");
@@ -287,7 +296,7 @@ export function hideOverlay() {
   overlay.style.display = "none";
 }
 
-export function updateHUD(speedRatio, displaySpeed, heading, ammo, maxAmmo, hp, maxHp, fuel, maxFuel, parts, wave, waveState, dt) {
+export function updateHUD(speedRatio, displaySpeed, heading, ammo, maxAmmo, hp, maxHp, fuel, maxFuel, parts, wave, waveState, dt, salvage) {
   if (!container) return;
 
   var pct = Math.min(1, speedRatio) * 100;
@@ -319,6 +328,11 @@ export function updateHUD(speedRatio, displaySpeed, heading, ammo, maxAmmo, hp, 
   if (parts !== undefined && partsLabel) {
     partsLabel.textContent = "PARTS: " + parts;
     partsLabel.style.color = parts > 0 ? "#44dd66" : "#8899aa";
+  }
+
+  // salvage count
+  if (salvage !== undefined && salvageLabel) {
+    salvageLabel.textContent = "SALVAGE: " + salvage;
   }
 
   // player HP
