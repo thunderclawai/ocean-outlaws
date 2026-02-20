@@ -6,7 +6,8 @@ import { initInput, getInput, getMouse, consumeFire } from "./input.js";
 import { createHUD, updateHUD } from "./hud.js";
 import { initNav, updateNav } from "./nav.js";
 import { createTurretSystem, aimTurrets, fire, updateTurrets, screenToWorld } from "./turret.js";
-import { createEnemies } from "./enemy.js";
+import { createEnemyManager, updateEnemies, getPlayerHp } from "./enemy.js";
+import { initHealthBars, updateHealthBars } from "./health.js";
 
 // --- renderer ---
 var renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -39,11 +40,8 @@ scene.add(ocean.mesh);
 var ship = createShip();
 scene.add(ship.mesh);
 
-// --- enemies ---
-var enemies = createEnemies(5);
-for (var i = 0; i < enemies.length; i++) {
-  scene.add(enemies[i].mesh);
-}
+// --- enemy manager ---
+var enemyMgr = createEnemyManager();
 
 // --- input ---
 initInput();
@@ -53,6 +51,9 @@ var turrets = createTurretSystem(ship);
 
 // --- HUD ---
 createHUD();
+
+// --- health bars ---
+initHealthBars();
 
 // --- camera ---
 var cam = createCamera(window.innerWidth / window.innerHeight);
@@ -98,11 +99,19 @@ function animate() {
   }
 
   // update projectiles, effects, hit detection
-  updateTurrets(turrets, dt, scene, enemies);
+  updateTurrets(turrets, dt, scene, enemyMgr);
+
+  // update enemies (spawn, AI, firing, destruction)
+  updateEnemies(enemyMgr, ship, dt, scene, getWaveHeight, elapsed);
+
+  // health bars above ships
+  var hpInfo = getPlayerHp(enemyMgr);
+  updateHealthBars(cam.camera, enemyMgr.enemies, ship, hpInfo.hp, hpInfo.maxHp);
 
   updateHUD(
     getSpeedRatio(ship), getDisplaySpeed(ship), ship.heading,
-    turrets.ammo, turrets.maxAmmo
+    turrets.ammo, turrets.maxAmmo,
+    hpInfo.hp, hpInfo.maxHp
   );
 
   renderer.render(scene, cam.camera);
