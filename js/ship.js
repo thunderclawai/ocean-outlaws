@@ -131,8 +131,14 @@ function normalizeAngle(a) {
 
 // --- update ship physics ---
 // fuelMult: 0-1 multiplier on max speed from fuel level (optional, defaults to 1)
-export function updateShip(ship, input, dt, getWaveHeight, elapsed, fuelMult) {
-  var effectiveMaxSpeed = MAX_SPEED * (fuelMult !== undefined ? fuelMult : 1);
+// upgradeMults: { maxSpeed, turnRate, accel } multipliers from upgrade system (optional)
+export function updateShip(ship, input, dt, getWaveHeight, elapsed, fuelMult, upgradeMults) {
+  var speedMult = upgradeMults ? upgradeMults.maxSpeed : 1;
+  var turnMult2 = upgradeMults ? upgradeMults.turnRate : 1;
+  var accelMult = upgradeMults ? upgradeMults.accel : 1;
+  var effectiveMaxSpeed = MAX_SPEED * speedMult * (fuelMult !== undefined ? fuelMult : 1);
+  var effectiveAccel = ACCEL * accelMult;
+  var effectiveReverseAccel = REVERSE_ACCEL * accelMult;
   var wasdActive = input.forward || input.backward || input.left || input.right;
 
   // WASD overrides auto-nav
@@ -169,7 +175,7 @@ export function updateShip(ship, input, dt, getWaveHeight, elapsed, fuelMult) {
       // only accelerate when roughly facing target
       if (Math.abs(angleDiff) < Math.PI * 0.5) {
         if (ship.speed < desiredSpeed) {
-          ship.speed += ACCEL * dt;
+          ship.speed += effectiveAccel * dt;
           if (ship.speed > desiredSpeed) ship.speed = desiredSpeed;
         } else {
           ship.speed -= DRAG * dt;
@@ -184,9 +190,9 @@ export function updateShip(ship, input, dt, getWaveHeight, elapsed, fuelMult) {
   } else {
     // --- manual WASD controls ---
     if (input.forward) {
-      ship.speed += ACCEL * dt;
+      ship.speed += effectiveAccel * dt;
     } else if (input.backward) {
-      ship.speed -= REVERSE_ACCEL * dt;
+      ship.speed -= effectiveReverseAccel * dt;
     }
 
     // drag — always opposes motion
@@ -202,7 +208,7 @@ export function updateShip(ship, input, dt, getWaveHeight, elapsed, fuelMult) {
 
     // turning — interpolate turn rate based on speed ratio
     var speedRatio = Math.abs(ship.speed) / effectiveMaxSpeed;
-    var turnRate = TURN_SPEED_LOW + (TURN_SPEED_HIGH - TURN_SPEED_LOW) * speedRatio;
+    var turnRate = (TURN_SPEED_LOW + (TURN_SPEED_HIGH - TURN_SPEED_LOW) * speedRatio) * turnMult2;
     var turnMult = Math.max(0.1, Math.min(1, Math.abs(ship.speed) / 5));
 
     if (input.left)  ship.heading += turnRate * turnMult * dt;

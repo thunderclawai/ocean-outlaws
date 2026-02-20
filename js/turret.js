@@ -85,7 +85,12 @@ export function aimTurrets(turretState, worldTarget) {
 }
 
 // --- fire projectile from first available turret ---
-export function fire(turretState, scene, resources) {
+// upgradeMults: { fireRate, projSpeed, damage } from upgrade system (optional)
+export function fire(turretState, scene, resources, upgradeMults) {
+  var fireRateMult = upgradeMults ? upgradeMults.fireRate : 1;
+  var projSpeedMult = upgradeMults ? upgradeMults.projSpeed : 1;
+  var damageMult = upgradeMults ? upgradeMults.damage : 1;
+
   if (turretState.cooldown > 0) return;
 
   // use resource system for ammo if available, else fallback to internal
@@ -99,7 +104,7 @@ export function fire(turretState, scene, resources) {
     turretState.ammo--;
   }
 
-  turretState.cooldown = FIRE_COOLDOWN;
+  turretState.cooldown = FIRE_COOLDOWN / fireRateMult;
   turretState.shotCount++;
 
   // alternate turrets
@@ -117,10 +122,11 @@ export function fire(turretState, scene, resources) {
   dir.normalize();
 
   // slight upward arc for gravity
+  var effectiveProjSpeed = PROJECTILE_SPEED * projSpeedMult;
   var velocity = new THREE.Vector3(
-    dir.x * PROJECTILE_SPEED,
-    PROJECTILE_SPEED * 0.08,  // slight loft
-    dir.z * PROJECTILE_SPEED
+    dir.x * effectiveProjSpeed,
+    effectiveProjSpeed * 0.08,  // slight loft
+    dir.z * effectiveProjSpeed
   );
 
   // create projectile mesh
@@ -136,7 +142,8 @@ export function fire(turretState, scene, resources) {
     velocity: velocity,
     origin: barrelTip.clone(),
     age: 0,
-    trail: trail
+    trail: trail,
+    damageMult: damageMult
   };
   turretState.projectiles.push(proj);
 
@@ -272,6 +279,7 @@ export function updateTurrets(turretState, dt, scene, enemyManager) {
 function checkEnemyHit(projectile, enemies, enemyManager, scene) {
   if (!enemies) return false;
   var pp = projectile.mesh.position;
+  var dmgMult = projectile.damageMult || 1;
   for (var i = 0; i < enemies.length; i++) {
     var enemy = enemies[i];
     if (!enemy.alive) continue;
@@ -283,7 +291,7 @@ function checkEnemyHit(projectile, enemies, enemyManager, scene) {
     var hitRadius = enemy.hitRadius || 2.0;
     if (distSq < hitRadius * hitRadius) {
       if (enemyManager) {
-        damageEnemy(enemyManager, enemy, scene);
+        damageEnemy(enemyManager, enemy, scene, dmgMult);
       }
       return true;
     }

@@ -6,11 +6,16 @@ import { initInput, getInput, getMouse, consumeFire } from "./input.js";
 import { createHUD, updateHUD, showBanner, showGameOver, showVictory, setRestartCallback, hideOverlay } from "./hud.js";
 import { initNav, updateNav } from "./nav.js";
 import { createTurretSystem, aimTurrets, fire, updateTurrets, screenToWorld } from "./turret.js";
-import { createEnemyManager, updateEnemies, getPlayerHp, setOnDeathCallback, setPlayerHp, resetEnemyManager } from "./enemy.js";
+import { createEnemyManager, updateEnemies, getPlayerHp, setOnDeathCallback, setPlayerHp, setPlayerArmor, setPlayerMaxHp, resetEnemyManager } from "./enemy.js";
 import { initHealthBars, updateHealthBars } from "./health.js";
 import { createResources, consumeFuel, getFuelSpeedMult, resetResources } from "./resource.js";
 import { createPickupManager, spawnPickup, updatePickups } from "./pickup.js";
 import { createWaveManager, updateWaveState, getWaveConfig, getWaveState, resetWaveManager } from "./wave.js";
+import { createUpgradeState, resetUpgrades, addSalvage, getMultipliers } from "./upgrade.js";
+import { createUpgradeScreen, showUpgradeScreen, hideUpgradeScreen, isUpgradeScreenVisible } from "./upgradeScreen.js";
+
+// --- salvage tuning ---
+var SALVAGE_PER_KILL = 10;
 
 // --- renderer ---
 var renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -52,9 +57,14 @@ var pickupMgr = createPickupManager();
 // --- enemy manager ---
 var enemyMgr = createEnemyManager();
 
-// wire enemy death → pickup spawn
+// --- upgrade system ---
+var upgrades = createUpgradeState();
+createUpgradeScreen();
+
+// wire enemy death → pickup spawn + salvage
 setOnDeathCallback(enemyMgr, function (x, y, z) {
   spawnPickup(pickupMgr, x, y, z, scene);
+  addSalvage(upgrades, SALVAGE_PER_KILL);
 });
 
 // --- wave manager ---
@@ -81,13 +91,31 @@ var cam = createCamera(window.innerWidth / window.innerHeight);
 // --- click/tap-to-move navigation ---
 initNav(cam.camera, ship, scene);
 
+// --- apply upgrade multipliers to game systems ---
+function applyUpgrades() {
+  var m = getMultipliers(upgrades);
+  // defense: armor and max HP
+  setPlayerArmor(enemyMgr, m.armor);
+  var baseMaxHp = 10;
+  var newMaxHp = Math.round(baseMaxHp * m.maxHp);
+  var oldMaxHp = enemyMgr.playerMaxHp;
+  setPlayerMaxHp(enemyMgr, newMaxHp);
+  // scale current HP proportionally when max HP increases
+  if (newMaxHp > oldMaxHp) {
+    var hpGain = newMaxHp - oldMaxHp;
+    setPlayerHp(enemyMgr, enemyMgr.playerHp + hpGain);
+  }
+}
+
 // --- restart handler ---
 var gameFrozen = false;
+var upgradeScreenOpen = false;
 
 setRestartCallback(function () {
   resetWaveManager(waveMgr);
   resetResources(resources);
   resetEnemyManager(enemyMgr, scene);
+  resetUpgrades(upgrades);
   ship.posX = 0;
   ship.posZ = 0;
   ship.speed = 0;
@@ -96,6 +124,8 @@ setRestartCallback(function () {
   turrets.ammo = resources.ammo;
   turrets.maxAmmo = resources.maxAmmo;
   gameFrozen = false;
+  upgradeScreenOpen = false;
+  hideUpgradeScreen();
   hideOverlay();
   showBanner("Wave 1 incoming!", 3);
 });
@@ -123,11 +153,14 @@ function animate() {
   var input = getInput();
   var mouse = getMouse();
 
-  // don't update game logic when frozen (game over / victory)
-  if (!gameFrozen) {
+  // don't update game logic when frozen (game over / victory / upgrade screen)
+  if (!gameFrozen && !upgradeScreenOpen) {
+    // get current upgrade multipliers
+    var mults = getMultipliers(upgrades);
+
     // fuel affects max speed
     var fuelMult = getFuelSpeedMult(resources);
-    updateShip(ship, input, dt, getWaveHeight, elapsed, fuelMult);
+    updateShip(ship, input, dt, getWaveHeight, elapsed, fuelMult, mults);
 
     // consume fuel based on throttle
     var speedRatio = getSpeedRatio(ship);
@@ -145,7 +178,7 @@ function animate() {
 
     // fire on click/tap (using resource ammo)
     if (mouse.firePressed && !mouse.fireConsumed) {
-      fire(turrets, scene, resources);
+      fire(turrets, scene, resources, mults);
       consumeFire();
     }
 
@@ -177,6 +210,14 @@ function animate() {
         showBanner("Wave " + waveMgr.wave + " incoming!", 3);
       } else if (event === "wave_complete") {
         showBanner("Wave " + waveMgr.wave + " cleared!", 2.5);
+        // show upgrade screen between waves (not after final wave)
+        if (waveMgr.wave < waveMgr.maxWave) {
+          upgradeScreenOpen = true;
+          showUpgradeScreen(upgrades, function () {
+            upgradeScreenOpen = false;
+            applyUpgrades();
+          });
+        }
       } else if (event === "game_over") {
         showGameOver(waveMgr.wave);
         gameFrozen = true;
@@ -205,7 +246,8 @@ function animate() {
       hpInfo.hp, hpInfo.maxHp,
       resources.fuel, resources.maxFuel,
       resources.parts,
-      waveMgr.wave, waveState, dt
+      waveMgr.wave, waveState, dt,
+      upgrades.salvage
     );
   } else {
     // still render ocean and camera when frozen
