@@ -5,6 +5,8 @@ var speedBar = null;
 var speedLabel = null;
 var compassLabel = null;
 var ammoLabel = null;
+var weaponPanel = null;
+var weaponItems = [];    // {el, label, nameEl} per weapon slot
 var fuelBarBg = null;
 var fuelBar = null;
 var fuelLabel = null;
@@ -74,10 +76,44 @@ export function createHUD() {
   compassLabel.style.color = "#667788";
   container.appendChild(compassLabel);
 
-  // ammo counter
+  // weapon selector panel
+  weaponPanel = document.createElement("div");
+  weaponPanel.style.marginTop = "8px";
+  var weaponDefs = [
+    { name: "Turret", shortcut: "1", color: "#ffcc44" },
+    { name: "Missile", shortcut: "2", color: "#ff6644" },
+    { name: "Torpedo", shortcut: "3", color: "#44aaff" }
+  ];
+  weaponItems = [];
+  for (var w = 0; w < weaponDefs.length; w++) {
+    var row = document.createElement("div");
+    row.style.cssText = [
+      "display: flex",
+      "align-items: center",
+      "gap: 6px",
+      "padding: 2px 4px",
+      "margin-bottom: 2px",
+      "border-radius: 3px",
+      "font-size: 12px"
+    ].join(";");
+    var nameEl = document.createElement("span");
+    nameEl.textContent = weaponDefs[w].shortcut + " " + weaponDefs[w].name;
+    nameEl.style.color = weaponDefs[w].color;
+    nameEl.style.minWidth = "72px";
+    row.appendChild(nameEl);
+    var label = document.createElement("span");
+    label.textContent = "--";
+    label.style.color = "#8899aa";
+    row.appendChild(label);
+    weaponPanel.appendChild(row);
+    weaponItems.push({ el: row, label: label, nameEl: nameEl, color: weaponDefs[w].color });
+  }
+  container.appendChild(weaponPanel);
+
+  // total ammo counter
   ammoLabel = document.createElement("div");
   ammoLabel.textContent = "AMMO: --";
-  ammoLabel.style.marginTop = "8px";
+  ammoLabel.style.marginTop = "4px";
   ammoLabel.style.fontSize = "13px";
   ammoLabel.style.color = "#8899aa";
   container.appendChild(ammoLabel);
@@ -296,7 +332,7 @@ export function hideOverlay() {
   overlay.style.display = "none";
 }
 
-export function updateHUD(speedRatio, displaySpeed, heading, ammo, maxAmmo, hp, maxHp, fuel, maxFuel, parts, wave, waveState, dt, salvage) {
+export function updateHUD(speedRatio, displaySpeed, heading, ammo, maxAmmo, hp, maxHp, fuel, maxFuel, parts, wave, waveState, dt, salvage, weaponInfo) {
   if (!container) return;
 
   var pct = Math.min(1, speedRatio) * 100;
@@ -308,6 +344,22 @@ export function updateHUD(speedRatio, displaySpeed, heading, ammo, maxAmmo, hp, 
   var dirs = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"];
   var idx = Math.round(deg / 45) % 8;
   compassLabel.textContent = dirs[idx] + " " + Math.round(deg) + "\u00B0";
+
+  // weapon panel
+  if (weaponInfo && weaponItems.length > 0) {
+    var ammoCosts = weaponInfo.ammoCosts;
+    for (var w = 0; w < weaponItems.length; w++) {
+      var item = weaponItems[w];
+      var isActive = w === weaponInfo.activeIndex;
+      item.el.style.background = isActive ? "rgba(40, 60, 90, 0.6)" : "transparent";
+      item.el.style.border = isActive ? "1px solid " + item.color : "1px solid transparent";
+      var cost = ammoCosts[w];
+      var canAfford = ammo >= cost;
+      item.label.textContent = "x" + cost;
+      item.label.style.color = canAfford ? "#8899aa" : "#cc4444";
+      item.nameEl.style.opacity = isActive ? "1" : "0.5";
+    }
+  }
 
   // ammo counter
   if (ammo !== undefined) {

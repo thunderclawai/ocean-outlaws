@@ -14,8 +14,14 @@ var mouse = {
   fireConsumed: false
 };
 
+var weaponSwitch = -1;  // -1 means no switch requested
+
 function onKeyDown(e) {
   setKey(e.code, true);
+  // weapon switch: 1, 2, 3
+  if (e.code === "Digit1") weaponSwitch = 0;
+  if (e.code === "Digit2") weaponSwitch = 1;
+  if (e.code === "Digit3") weaponSwitch = 2;
 }
 
 function onKeyUp(e) {
@@ -75,4 +81,10 @@ export function getMouse() {
 export function consumeFire() {
   mouse.firePressed = false;
   mouse.fireConsumed = true;
+}
+
+export function consumeWeaponSwitch() {
+  var val = weaponSwitch;
+  weaponSwitch = -1;
+  return val;
 }
