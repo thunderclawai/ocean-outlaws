@@ -28,6 +28,8 @@ import { createCrewScreen, showCrewScreen, hideCrewScreen } from "./crewScreen.j
 import { loadTechState, getTechBonuses } from "./techTree.js";
 import { createTechScreen, showTechScreen, hideTechScreen } from "./techScreen.js";
 import { createTerrain, removeTerrain, collideWithTerrain, isLand, findWaterPosition } from "./terrain.js";
+import { createPortManager, initPorts, clearPorts, updatePorts, getPortsInfo } from "./port.js";
+import { createCrateManager, clearCrates, updateCrates } from "./crate.js";
 
 var SALVAGE_PER_KILL = 10;
 
@@ -77,6 +79,8 @@ var activeZoneId = null;
 var activeTerrain = null;
 var resources = createResources();
 var pickupMgr = createPickupManager();
+var portMgr = createPortManager();
+var crateMgr = createCrateManager();
 var enemyMgr = createEnemyManager();
 var droneMgr = createDroneManager();
 var upgrades = createUpgradeState();
@@ -168,6 +172,9 @@ function startZoneCombat(classKey, zoneId) {
   terrainSeed += Math.floor(Math.random() * 10000);
   activeTerrain = createTerrain(terrainSeed, zone.difficulty);
   scene.add(activeTerrain.mesh);
+  clearPorts(portMgr, scene);
+  initPorts(portMgr, activeTerrain, scene);
+  clearCrates(crateMgr, scene);
   if (ship && ship.mesh) scene.remove(ship.mesh);
   ship = createShip(classCfg);
   scene.add(ship.mesh);
@@ -244,6 +251,8 @@ setRestartCallback(function () {
   resetCrew(crew);
   if (activeBoss) { removeBoss(activeBoss, scene); activeBoss = null; }
   hideBossHud();
+  clearPorts(portMgr, scene);
+  clearCrates(crateMgr, scene);
   if (activeTerrain) { removeTerrain(activeTerrain, scene); activeTerrain = null; }
   if (ship) {
     // Find safe water spawn — don't place on land
@@ -397,6 +406,8 @@ function animate() {
 
     updateEnemies(enemyMgr, ship, dt, scene, weatherWaveHeight, elapsed, waveMgr, getWaveConfig(waveMgr), activeTerrain);
     updatePickups(pickupMgr, ship, resources, dt, elapsed, weatherWaveHeight, scene);
+    updatePorts(portMgr, ship, resources, enemyMgr, dt);
+    updateCrates(crateMgr, ship, resources, activeTerrain, dt, elapsed, weatherWaveHeight, scene);
     if (mults.autoRepair) {
       var arHp = getPlayerHp(enemyMgr);
       if (arHp.hp < arHp.maxHp) setPlayerHp(enemyMgr, Math.min(arHp.maxHp, arHp.hp + dt));
@@ -426,6 +437,7 @@ function animate() {
       } else if (event === "wave_complete") {
         showBanner("Wave " + waveMgr.wave + " cleared!", 2.5);
         clearPickups(pickupMgr, scene);
+        clearCrates(crateMgr, scene);
         if (activeBoss) {
           removeBoss(activeBoss, scene);
           activeBoss = null;
@@ -476,9 +488,10 @@ function animate() {
         activeTimer: abilityState.activeTimer, duration: abilityState.duration,
         cooldownTimer: abilityState.cooldownTimer, cooldown: abilityState.cooldown };
     }
+    var portInfo = getPortsInfo(portMgr, ship);
     updateHUD(speedRatio, getDisplaySpeed(ship), ship.heading, resources.ammo, resources.maxAmmo,
       hpInfo.hp, hpInfo.maxHp, resources.fuel, resources.maxFuel, resources.parts,
-      waveMgr.wave, waveState, dt, upgrades.salvage, weaponInfo, abilityHudInfo, getWeatherLabel(weather), getAutofire());
+      waveMgr.wave, waveState, dt, upgrades.salvage, weaponInfo, abilityHudInfo, getWeatherLabel(weather), getAutofire(), portInfo);
   } else {
     var wpIdle = getWeatherPreset(weather);
     updateDayNight(dayNight, dt);
