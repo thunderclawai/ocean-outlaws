@@ -15,6 +15,7 @@ var mouse = {
 };
 
 var weaponSwitch = -1;  // -1 means no switch requested
+var abilityPressed = false;
 
 function onKeyDown(e) {
   setKey(e.code, true);
@@ -22,6 +23,8 @@ function onKeyDown(e) {
   if (e.code === "Digit1") weaponSwitch = 0;
   if (e.code === "Digit2") weaponSwitch = 1;
   if (e.code === "Digit3") weaponSwitch = 2;
+  // ability: Q
+  if (e.code === "KeyQ") abilityPressed = true;
 }
 
 function onKeyUp(e) {
@@ -86,5 +89,11 @@ export function consumeFire() {
 export function consumeWeaponSwitch() {
   var val = weaponSwitch;
   weaponSwitch = -1;
+  return val;
+}
+
+export function consumeAbility() {
+  var val = abilityPressed;
+  abilityPressed = false;
   return val;
 }

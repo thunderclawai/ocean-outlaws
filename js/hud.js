@@ -1,4 +1,4 @@
-// hud.js — speed indicator, compass, ammo counter, fuel gauge, parts count, wave info, overlays
+// hud.js — speed indicator, compass, ammo counter, fuel gauge, parts count, wave info, ability, overlays
 
 var container = null;
 var speedBar = null;
@@ -16,6 +16,11 @@ var hpBarBg = null;
 var hpBar = null;
 var hpLabel = null;
 var waveLabel = null;
+var abilityContainer = null;
+var abilityLabel = null;
+var abilityBarBg = null;
+var abilityBar = null;
+var abilityStatus = null;
 
 // overlay elements
 var banner = null;
@@ -203,6 +208,47 @@ export function createHUD() {
   waveLabel.style.fontWeight = "bold";
   container.appendChild(waveLabel);
 
+  // ability indicator
+  abilityContainer = document.createElement("div");
+  abilityContainer.style.marginTop = "10px";
+
+  abilityLabel = document.createElement("div");
+  abilityLabel.textContent = "[Q] Ability";
+  abilityLabel.style.fontSize = "12px";
+  abilityLabel.style.color = "#667788";
+  abilityLabel.style.marginBottom = "3px";
+  abilityContainer.appendChild(abilityLabel);
+
+  abilityBarBg = document.createElement("div");
+  abilityBarBg.style.cssText = [
+    "width: 120px",
+    "height: 10px",
+    "background: rgba(20, 30, 50, 0.7)",
+    "border: 1px solid rgba(80, 100, 130, 0.4)",
+    "border-radius: 4px",
+    "overflow: hidden"
+  ].join(";");
+
+  abilityBar = document.createElement("div");
+  abilityBar.style.cssText = [
+    "width: 100%",
+    "height: 100%",
+    "background: #cc66ff",
+    "border-radius: 3px",
+    "transition: width 0.1s"
+  ].join(";");
+  abilityBarBg.appendChild(abilityBar);
+  abilityContainer.appendChild(abilityBarBg);
+
+  abilityStatus = document.createElement("div");
+  abilityStatus.textContent = "READY";
+  abilityStatus.style.fontSize = "11px";
+  abilityStatus.style.color = "#cc66ff";
+  abilityStatus.style.marginTop = "2px";
+  abilityContainer.appendChild(abilityStatus);
+
+  container.appendChild(abilityContainer);
+
   document.body.appendChild(container);
 
   // --- wave announcement banner (centered, fades out) ---
@@ -332,7 +378,7 @@ export function hideOverlay() {
   overlay.style.display = "none";
 }
 
-export function updateHUD(speedRatio, displaySpeed, heading, ammo, maxAmmo, hp, maxHp, fuel, maxFuel, parts, wave, waveState, dt, salvage, weaponInfo) {
+export function updateHUD(speedRatio, displaySpeed, heading, ammo, maxAmmo, hp, maxHp, fuel, maxFuel, parts, wave, waveState, dt, salvage, weaponInfo, abilityInfo) {
   if (!container) return;
 
   var pct = Math.min(1, speedRatio) * 100;
@@ -410,6 +456,31 @@ export function updateHUD(speedRatio, displaySpeed, heading, ammo, maxAmmo, hp, 
     } else {
       waveLabel.textContent = "WAVE " + wave;
       waveLabel.style.color = "#8899aa";
+    }
+  }
+
+  // ability indicator
+  if (abilityInfo && abilityContainer) {
+    abilityLabel.textContent = "[Q] " + abilityInfo.name;
+    abilityLabel.style.color = abilityInfo.color || "#667788";
+
+    if (abilityInfo.active) {
+      var activePct = Math.max(0, abilityInfo.activeTimer / abilityInfo.duration) * 100;
+      abilityBar.style.width = activePct + "%";
+      abilityBar.style.background = abilityInfo.color || "#cc66ff";
+      abilityStatus.textContent = "ACTIVE";
+      abilityStatus.style.color = abilityInfo.color || "#cc66ff";
+    } else if (abilityInfo.cooldownTimer > 0) {
+      var cdPct = (1 - abilityInfo.cooldownTimer / abilityInfo.cooldown) * 100;
+      abilityBar.style.width = cdPct + "%";
+      abilityBar.style.background = "#556677";
+      abilityStatus.textContent = Math.ceil(abilityInfo.cooldownTimer) + "s";
+      abilityStatus.style.color = "#667788";
+    } else {
+      abilityBar.style.width = "100%";
+      abilityBar.style.background = abilityInfo.color || "#cc66ff";
+      abilityStatus.textContent = "READY";
+      abilityStatus.style.color = abilityInfo.color || "#cc66ff";
     }
   }
 
