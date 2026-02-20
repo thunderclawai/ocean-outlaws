@@ -19,7 +19,8 @@ import { createShipSelectScreen, showShipSelectScreen, hideShipSelectScreen } fr
 import { createDroneManager, spawnDrone, updateDrones, resetDrones } from "./drone.js";
 import { createMapScreen, showMapScreen, hideMapScreen } from "./mapScreen.js";
 import { loadMapState, getZone, calcStars, completeZone, buildZoneWaveConfigs, saveMapState } from "./mapData.js";
-import { createWeather, setWeather, getWeatherPreset, getWeatherLabel, maybeChangeWeather, createRain, updateWeather } from "./weather.js";
+import { createWeather, setWeather, getWeatherPreset, getWeatherLabel, getWeatherDim, getWeatherFoam, getWeatherCloudShadow, maybeChangeWeather, createRain, createSplashes, updateWeather } from "./weather.js";
+import { createDayNight, updateDayNight, applyDayNight, createStars, updateStars } from "./daynight.js";
 import { createBoss, updateBoss, removeBoss, rollBossLoot, applyBossLoot } from "./boss.js";
 import { createBossHud, showBossHud, hideBossHud, updateBossHud, showLootBanner } from "./bossHud.js";
 import { createCrewState, resetCrew, generateOfficerReward, addOfficer, getCrewBonuses } from "./crew.js";
@@ -55,6 +56,11 @@ weather.ambientRef = ambient;
 weather.sunRef = sun;
 var rain = createRain(scene);
 weather.rain = rain;
+var splashes = createSplashes(scene);
+weather.splashes = splashes;
+
+var dayNight = createDayNight();
+var stars = createStars(scene);
 
 var ship = null;
 var weapons = null;
@@ -315,8 +321,14 @@ function animate() {
     mults.windZ = wp.windZ;
     var waveAmp = wp.waveAmplitude;
     var weatherWaveHeight = function (wx, wz, wt) { return getWaveHeight(wx, wz, wt, waveAmp); };
+    // day/night cycle
+    updateDayNight(dayNight, dt);
+    var wDim = getWeatherDim(weather);
+    var lightDim = weather.lightningActive ? 3.0 : wDim;
+    applyDayNight(dayNight, ambient, sun, hemi, scene.fog, renderer, lightDim);
+    updateStars(stars, dayNight.timeOfDay);
     // ocean must update before ships so wave height is current-frame
-    updateOcean(ocean.uniforms, elapsed, wp.waveAmplitude, wp.waterTint);
+    updateOcean(ocean.uniforms, elapsed, wp.waveAmplitude, wp.waterTint, dayNight, cam.camera, wDim, getWeatherFoam(weather), getWeatherCloudShadow(weather));
     updateWeather(weather, dt, scene, ship.posX, ship.posZ);
     maybeChangeWeather(weather);
     updateShip(ship, input, dt, weatherWaveHeight, elapsed, fuelMult, mults, activeTerrain);
@@ -459,7 +471,11 @@ function animate() {
       waveMgr.wave, waveState, dt, upgrades.salvage, weaponInfo, abilityHudInfo, getWeatherLabel(weather), getAutofire());
   } else {
     var wpIdle = getWeatherPreset(weather);
-    updateOcean(ocean.uniforms, elapsed, wpIdle.waveAmplitude, wpIdle.waterTint);
+    updateDayNight(dayNight, dt);
+    var idleDim = getWeatherDim(weather);
+    applyDayNight(dayNight, ambient, sun, hemi, scene.fog, renderer, idleDim);
+    updateStars(stars, dayNight.timeOfDay);
+    updateOcean(ocean.uniforms, elapsed, wpIdle.waveAmplitude, wpIdle.waterTint, dayNight, cam.camera, idleDim, getWeatherFoam(weather), getWeatherCloudShadow(weather));
     updateWeather(weather, dt, scene, ship ? ship.posX : 0, ship ? ship.posZ : 0);
     if (ship) {
       updateCamera(cam, dt, ship.posX, ship.posZ);

@@ -1,4 +1,4 @@
-// weather.js — weather state machine, rain particles, lightning flashes
+// weather.js — weather state machine, rain particles, lightning flashes, rain splashes
 import * as THREE from "three";
 
 // --- weather presets ---
@@ -7,11 +7,14 @@ var PRESETS = {
     waveAmplitude: 1.0,
     fogDensity: 0.006,
     fogColor: 0x0a0e1a,
-    waterTint: [0.0, 0.0, 0.0],   // no shift
+    waterTint: [0.0, 0.0, 0.0],
     windX: 0,
     windZ: 0,
     rainDensity: 0,
     lightningChance: 0,
+    dimFactor: 1.0,          // 1.0 = full brightness
+    foamIntensity: 0.3,      // base foam
+    cloudShadow: 0.0,        // no cloud shadows
     visLabel: "CALM"
   },
   rough: {
@@ -23,6 +26,9 @@ var PRESETS = {
     windZ: 2,
     rainDensity: 0.3,
     lightningChance: 0,
+    dimFactor: 0.75,
+    foamIntensity: 0.7,
+    cloudShadow: 0.4,
     visLabel: "ROUGH"
   },
   storm: {
@@ -33,13 +39,16 @@ var PRESETS = {
     windX: 7,
     windZ: 5,
     rainDensity: 1.0,
-    lightningChance: 0.008,  // per-frame chance (~0.5/s at 60fps)
+    lightningChance: 0.008,
+    dimFactor: 0.45,
+    foamIntensity: 1.0,
+    cloudShadow: 0.8,
     visLabel: "STORM"
   }
 };
 
 // --- mid-wave weather change ---
-var MID_WAVE_CHANGE_CHANCE = 0.0005; // per-frame chance (~3% per 60s)
+var MID_WAVE_CHANGE_CHANCE = 0.0005;
 var WEATHER_POOL = ["calm", "rough", "storm"];
 
 // --- create weather state ---
@@ -50,17 +59,14 @@ export function createWeather(conditionKey) {
   return {
     current: key,
     preset: Object.assign({}, preset),
-    // lerp targets for smooth transitions
     target: Object.assign({}, preset),
     lerpSpeed: 0.5,
-    // rain particle system
     rain: null,
     rainMaterial: null,
-    // lightning state
+    splashes: null,
     lightningActive: false,
     lightningTimer: 0,
     lightningDuration: 0.12,
-    // ambient light ref (set externally)
     ambientRef: null,
     sunRef: null,
     fogRef: null
@@ -90,6 +96,21 @@ export function getWeatherLabel(state) {
   return state.preset.visLabel || "CALM";
 }
 
+// --- get weather dim factor (for day/night integration) ---
+export function getWeatherDim(state) {
+  return state.preset.dimFactor !== undefined ? state.preset.dimFactor : 1.0;
+}
+
+// --- get foam intensity ---
+export function getWeatherFoam(state) {
+  return state.preset.foamIntensity !== undefined ? state.preset.foamIntensity : 0.3;
+}
+
+// --- get cloud shadow intensity ---
+export function getWeatherCloudShadow(state) {
+  return state.preset.cloudShadow !== undefined ? state.preset.cloudShadow : 0.0;
+}
+
 // --- maybe randomly change weather mid-wave ---
 export function maybeChangeWeather(state) {
   if (Math.random() < MID_WAVE_CHANGE_CHANCE) {
@@ -108,10 +129,10 @@ export function createRain(scene) {
   var velocities = new Float32Array(count);
 
   for (var i = 0; i < count; i++) {
-    positions[i * 3]     = (Math.random() - 0.5) * 200;   // x
-    positions[i * 3 + 1] = Math.random() * 80;             // y
-    positions[i * 3 + 2] = (Math.random() - 0.5) * 200;   // z
-    velocities[i] = 30 + Math.random() * 20;               // fall speed
+    positions[i * 3]     = (Math.random() - 0.5) * 200;
+    positions[i * 3 + 1] = Math.random() * 80;
+    positions[i * 3 + 2] = (Math.random() - 0.5) * 200;
+    velocities[i] = 30 + Math.random() * 20;
   }
 
   geometry.setAttribute("position", new THREE.BufferAttribute(positions, 3));
@@ -132,6 +153,40 @@ export function createRain(scene) {
   return { mesh: points, geometry: geometry, material: material, velocities: velocities, count: count };
 }
 
+// --- create rain splash particles (small rings on water surface) ---
+export function createSplashes(scene) {
+  var count = 200;
+  var geometry = new THREE.BufferGeometry();
+  var positions = new Float32Array(count * 3);
+  var scales = new Float32Array(count);
+  var lifetimes = new Float32Array(count);
+
+  for (var i = 0; i < count; i++) {
+    positions[i * 3]     = 0;
+    positions[i * 3 + 1] = -100; // hidden below
+    positions[i * 3 + 2] = 0;
+    scales[i] = 0;
+    lifetimes[i] = 0;
+  }
+
+  geometry.setAttribute("position", new THREE.BufferAttribute(positions, 3));
+
+  var material = new THREE.PointsMaterial({
+    color: 0xaabbdd,
+    size: 0.6,
+    transparent: true,
+    opacity: 0,
+    depthWrite: false,
+    blending: THREE.AdditiveBlending
+  });
+
+  var points = new THREE.Points(geometry, material);
+  points.frustumCulled = false;
+  scene.add(points);
+
+  return { mesh: points, geometry: geometry, material: material, lifetimes: lifetimes, count: count, nextIdx: 0 };
+}
+
 // --- update rain particles ---
 function updateRain(rain, dt, density, shipX, shipZ) {
   if (!rain) return;
@@ -147,7 +202,6 @@ function updateRain(rain, dt, density, shipX, shipZ) {
     var idx = i * 3;
     positions[idx + 1] -= rain.velocities[i] * dt;
 
-    // respawn at top when below ground
     if (positions[idx + 1] < -2) {
       positions[idx]     = shipX + (Math.random() - 0.5) * 200;
       positions[idx + 1] = 60 + Math.random() * 20;
@@ -156,6 +210,43 @@ function updateRain(rain, dt, density, shipX, shipZ) {
   }
 
   rain.geometry.attributes.position.needsUpdate = true;
+}
+
+// --- update splash particles ---
+function updateSplashes(splashes, dt, density, shipX, shipZ) {
+  if (!splashes) return;
+
+  splashes.material.opacity = density * 0.4;
+
+  if (density <= 0) return;
+
+  var positions = splashes.geometry.attributes.position.array;
+  var lifetimes = splashes.lifetimes;
+  var count = splashes.count;
+
+  // spawn new splashes
+  var spawnRate = density * 80; // splashes per second
+  var toSpawn = Math.floor(spawnRate * dt + Math.random());
+  for (var s = 0; s < toSpawn; s++) {
+    var si = splashes.nextIdx;
+    splashes.nextIdx = (splashes.nextIdx + 1) % count;
+    positions[si * 3]     = shipX + (Math.random() - 0.5) * 120;
+    positions[si * 3 + 1] = 0.3;
+    positions[si * 3 + 2] = shipZ + (Math.random() - 0.5) * 120;
+    lifetimes[si] = 0.3 + Math.random() * 0.2;
+  }
+
+  // age and fade
+  for (var i = 0; i < count; i++) {
+    if (lifetimes[i] > 0) {
+      lifetimes[i] -= dt;
+      if (lifetimes[i] <= 0) {
+        positions[i * 3 + 1] = -100;
+      }
+    }
+  }
+
+  splashes.geometry.attributes.position.needsUpdate = true;
 }
 
 // --- update weather (call every frame) ---
@@ -171,6 +262,9 @@ export function updateWeather(state, dt, scene, shipX, shipZ) {
   p.windX         += (t.windX - p.windX) * s;
   p.windZ         += (t.windZ - p.windZ) * s;
   p.lightningChance += (t.lightningChance - p.lightningChance) * s;
+  p.dimFactor     += (t.dimFactor - p.dimFactor) * s;
+  p.foamIntensity += (t.foamIntensity - p.foamIntensity) * s;
+  p.cloudShadow   += (t.cloudShadow - p.cloudShadow) * s;
 
   for (var c = 0; c < 3; c++) {
     p.waterTint[c] += (t.waterTint[c] - p.waterTint[c]) * s;
@@ -178,13 +272,16 @@ export function updateWeather(state, dt, scene, shipX, shipZ) {
 
   p.visLabel = t.visLabel;
 
-  // update scene fog
+  // update scene fog density (color handled by daynight)
   if (state.fogRef) {
     state.fogRef.density = p.fogDensity;
   }
 
   // rain
   updateRain(state.rain, dt, p.rainDensity, shipX, shipZ);
+
+  // splashes
+  updateSplashes(state.splashes, dt, p.rainDensity, shipX, shipZ);
 
   // lightning
   if (p.lightningChance > 0 && Math.random() < p.lightningChance) {
@@ -196,17 +293,6 @@ export function updateWeather(state, dt, scene, shipX, shipZ) {
     state.lightningTimer -= dt;
     if (state.lightningTimer <= 0) {
       state.lightningActive = false;
-    }
-  }
-
-  // apply lightning flash to ambient light
-  if (state.ambientRef) {
-    if (state.lightningActive) {
-      state.ambientRef.intensity = 3.0;
-      state.ambientRef.color.setHex(0xccddff);
-    } else {
-      state.ambientRef.intensity += (0.6 - state.ambientRef.intensity) * 0.1;
-      state.ambientRef.color.setHex(0x1a2040);
     }
   }
 }
