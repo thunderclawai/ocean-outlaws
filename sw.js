@@ -1,5 +1,5 @@
 // sw.js — service worker: cache-first for offline play
-var CACHE_NAME = "ocean-outlaws-v1";
+var CACHE_NAME = "ocean-outlaws-v2";
 
 var ASSETS = [
   "/ocean-outlaws/",
@@ -74,21 +74,21 @@ self.addEventListener("activate", function (e) {
   self.clients.claim();
 });
 
-// cache-first strategy
+// network-first strategy: always try fresh, fall back to cache for offline
 self.addEventListener("fetch", function (e) {
   e.respondWith(
-    caches.match(e.request).then(function (cached) {
-      if (cached) return cached;
-      return fetch(e.request).then(function (response) {
-        // cache new responses for same-origin requests
-        if (response.ok && e.request.url.indexOf(self.location.origin) !== -1) {
-          var clone = response.clone();
-          caches.open(CACHE_NAME).then(function (cache) {
-            cache.put(e.request, clone);
-          });
-        }
-        return response;
-      });
+    fetch(e.request).then(function (response) {
+      // update cache with fresh response
+      if (response.ok && e.request.url.indexOf(self.location.origin) !== -1) {
+        var clone = response.clone();
+        caches.open(CACHE_NAME).then(function (cache) {
+          cache.put(e.request, clone);
+        });
+      }
+      return response;
+    }).catch(function () {
+      // offline — serve from cache
+      return caches.match(e.request);
     })
   );
 });
