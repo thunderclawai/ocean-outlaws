@@ -1,9 +1,14 @@
 {
   "name": "Ocean Outlaws",
   "short_name": "OceanOutlaws",
+  "description": "Browser-based naval combat game",
   "start_url": "/ocean-outlaws/",
   "display": "fullscreen",
+  "orientation": "landscape",
   "background_color": "#0a0e1a",
   "theme_color": "#0a0e1a",
-  "icons": []
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png" }
+  ]
 }

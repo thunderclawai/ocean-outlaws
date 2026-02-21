@@ -21,14 +21,14 @@ import { createAbilityState, activateAbility, updateAbility } from "./shipClass.
 import { createShipSelectScreen, showShipSelectScreen, hideShipSelectScreen } from "./shipSelect.js";
 import { createDroneManager, spawnDrone, updateDrones, resetDrones } from "./drone.js";
 import { createMapScreen, showMapScreen, hideMapScreen } from "./mapScreen.js";
-import { loadMapState, getZone, calcStars, completeZone, buildZoneWaveConfigs, saveMapState } from "./mapData.js";
+import { loadMapState, resetMapState, getZone, calcStars, completeZone, buildZoneWaveConfigs, saveMapState } from "./mapData.js";
 import { createWeather, setWeather, getWeatherPreset, getWeatherLabel, getWeatherDim, getWeatherFoam, getWeatherCloudShadow, maybeChangeWeather, createRain, createSplashes, updateWeather } from "./weather.js";
 import { createDayNight, updateDayNight, applyDayNight, createStars, updateStars } from "./daynight.js";
 import { createBoss, updateBoss, removeBoss, rollBossLoot, applyBossLoot } from "./boss.js";
 import { createBossHud, showBossHud, hideBossHud, updateBossHud, showLootBanner } from "./bossHud.js";
 import { createCrewState, resetCrew, generateOfficerReward, addOfficer, getCrewBonuses } from "./crew.js";
 import { createCrewScreen, showCrewScreen, hideCrewScreen } from "./crewScreen.js";
-import { loadTechState, getTechBonuses } from "./techTree.js";
+import { loadTechState, getTechBonuses, resetTechState } from "./techTree.js";
 import { createTechScreen, showTechScreen, hideTechScreen } from "./techScreen.js";
 import { createTerrain, removeTerrain, collideWithTerrain, isLand, findWaterPosition, getEdgeFactor } from "./terrain.js";
 import { createPortManager, initPorts, clearPorts, updatePorts, getPortsInfo } from "./port.js";
@@ -36,6 +36,8 @@ import { createCrateManager, clearCrates, updateCrates } from "./crate.js";
 import { createMultiplayerState, createRoom, joinRoom, setReady, setShipClass, startGame, allPlayersReady, leaveRoom, isMultiplayerActive, broadcast, getPlayerCount } from "./multiplayer.js";
 import { sendShipState, sendEnemyState, sendWaveStart, sendPickupClaim, sendFireEvent, sendGameEvent, handleBroadcastMessage, updateRemoteShips, getRemoteShipsForMinimap, clearRemoteShips, resetSendState } from "./netSync.js";
 import { createLobbyScreen, createMultiplayerButton, showLobbyChoice, showLobby, hideLobbyScreen, updatePlayerList, updateReadyButton, updateStartButton, setLobbyCallbacks } from "./lobbyScreen.js";
+import { autoSave, loadSave, hasSave, deleteSave, exportSave, importSave } from "./save.js";
+import { createSettingsMenu, isSettingsOpen } from "./settingsMenu.js";
 
 var SALVAGE_PER_KILL = 10;
 var prevPlayerHp = -1;
@@ -171,6 +173,43 @@ createBossHud();
 var cam = createCamera(window.innerWidth / window.innerHeight);
 createMapScreen();
 createShipSelectScreen();
+
+// --- settings menu ---
+createSettingsMenu({
+  onNewGame: function () {
+    gameFrozen = true;
+    gameStarted = false;
+    resetWaveManager(waveMgr);
+    resetResources(resources);
+    resetEnemyManager(enemyMgr, scene);
+    resetUpgrades(upgrades);
+    resetDrones(droneMgr, scene);
+    resetCrew(crew);
+    clearRemoteShips(scene);
+    resetSendState();
+    if (activeBoss) { removeBoss(activeBoss, scene); activeBoss = null; }
+    hideBossHud();
+    clearPorts(portMgr, scene);
+    clearCrates(crateMgr, scene);
+    if (activeTerrain) { removeTerrain(activeTerrain, scene); clearTerrainMap(ocean.uniforms); activeTerrain = null; }
+    if (weapons) { weapons.activeWeapon = 0; weapons.projectiles = []; weapons.effects = []; weapons.cooldown = 0; }
+    upgradeScreenOpen = false; crewScreenOpen = false; techScreenOpen = false;
+    setAutofire(false);
+    setWeather(weather, "calm");
+    hideUpgradeScreen(); hideCrewScreen(); hideTechScreen(); hideOverlay();
+    if (isMultiplayerActive(mpState)) { leaveRoom(mpState); mpReady = false; }
+    mapState = resetMapState();
+    resetTechState(techState);
+    techState = loadTechState();
+    selectedClass = null;
+    showShipSelectScreen(handleShipSelect, upgrades);
+  }
+});
+
+// --- service worker registration ---
+if ("serviceWorker" in navigator) {
+  navigator.serviceWorker.register("sw.js").catch(function () {});
+}
 
 // --- multiplayer ---
 var mpState = createMultiplayerState();
@@ -320,6 +359,16 @@ function handleShipSelect(classKey) {
   openTechThenMap();
 }
 
+// --- load save on startup ---
+var savedGame = loadSave();
+if (savedGame) {
+  if (savedGame.mapState) mapState = savedGame.mapState;
+  if (savedGame.techTree && savedGame.techTree.unlocked) techState = savedGame.techTree;
+  if (savedGame.upgrades && savedGame.upgrades.salvage !== undefined) upgrades.salvage = savedGame.upgrades.salvage;
+  if (savedGame.officers && savedGame.officers.roster) crew = savedGame.officers;
+  if (savedGame.selectedClass) selectedClass = savedGame.selectedClass;
+}
+
 showShipSelectScreen(handleShipSelect, upgrades);
 
 function openTechThenMap() {
@@ -389,6 +438,19 @@ function handleZoneVictory() {
   var stars = calcStars(hpInfo.hp, hpInfo.maxHp);
   mapState = completeZone(mapState, activeZoneId, stars);
   saveMapState(mapState);
+}
+
+function performAutoSave() {
+  autoSave({
+    zone: activeZoneId,
+    selectedClass: selectedClass,
+    upgrades: upgrades,
+    techTree: techState,
+    officers: crew,
+    currency: upgrades ? upgrades.salvage : 0,
+    skins: [],
+    mapState: mapState
+  });
 }
 
 function applyUpgrades() {
@@ -484,7 +546,7 @@ function animate() {
   var input = getInput();
   var mouse = getMouse();
 
-  if (!gameFrozen && !upgradeScreenOpen && !crewScreenOpen && !techScreenOpen && gameStarted) {
+  if (!gameFrozen && !upgradeScreenOpen && !crewScreenOpen && !techScreenOpen && !isSettingsOpen() && gameStarted) {
     var mults = buildCombinedMults(upgrades, getCrewBonuses(crew), getTechBonuses(techState));
 
     // process keyboard actions
@@ -657,6 +719,7 @@ function animate() {
           addOfficer(crew, waveOfficer);
           showBanner("Officer recruited: " + waveOfficer.portrait + " " + waveOfficer.name, 3);
         }
+        performAutoSave();
         if (waveMgr.wave < waveMgr.maxWave) {
           upgradeScreenOpen = true;
           showUpgradeScreen(upgrades, function () {
@@ -677,6 +740,7 @@ function animate() {
         });
       } else if (event === "victory") {
         handleZoneVictory();
+        performAutoSave();
         gameFrozen = true;
         hideBossHud();
         fadeOut(0.4, function () {
