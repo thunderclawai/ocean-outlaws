@@ -216,19 +216,20 @@ var mpState = createMultiplayerState();
 var mpReady = false;
 createLobbyScreen();
 
-// inject multiplayer button into ship select screen (find overlay)
+// inject multiplayer button into ship select screen (find the hint element directly)
 setTimeout(function () {
-  var selectOverlays = document.querySelectorAll("div");
-  for (var oi = 0; oi < selectOverlays.length; oi++) {
-    if (selectOverlays[oi].textContent.indexOf("Click a ship to start") !== -1) {
-      createMultiplayerButton(selectOverlays[oi].parentNode, function () {
+  var allDivs = document.querySelectorAll("div");
+  for (var oi = 0; oi < allDivs.length; oi++) {
+    // match the hint element itself (not a parent that contains it)
+    if (allDivs[oi].childNodes.length === 1 && allDivs[oi].textContent === "Click a ship to start") {
+      createMultiplayerButton(allDivs[oi].parentNode, function () {
         hideShipSelectScreen();
         showLobbyChoice();
       });
       break;
     }
   }
-}, 100);
+}, 300);
 
 setLobbyCallbacks({
   onCreate: function () {
