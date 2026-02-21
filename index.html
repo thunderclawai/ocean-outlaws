@@ -2,11 +2,15 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   <meta name="theme-color" content="#0a0e1a">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="description" content="Ocean Outlaws — browser-based naval combat. Build your fleet, upgrade your ship, survive the waves.">
   <title>Ocean Outlaws</title>
   <link rel="icon" href="game/icons/icon-192.png" type="image/png">
+  <link rel="apple-touch-icon" href="game/icons/icon-192.png">
+  <link rel="manifest" href="game/manifest.json">
   <style>
     @import url('https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&display=swap');
 
@@ -14,10 +18,12 @@
 
     body {
       min-height: 100vh;
+      min-height: 100dvh;
       background: #0a0e1a;
       color: #c8d0e0;
       font-family: 'Space Mono', monospace;
       overflow-x: hidden;
+      -webkit-tap-highlight-color: transparent;
     }
 
     /* Animated ocean background */
@@ -33,7 +39,7 @@
       position: absolute;
       bottom: 0;
       width: 200%;
-      height: 120px;
+      height: 80px;
       opacity: 0.15;
       animation: drift 8s ease-in-out infinite alternate;
     }
@@ -42,14 +48,14 @@
     .wave path { fill: #1a4a7a; }
 
     .wave:nth-child(2) {
-      bottom: 10px;
+      bottom: 8px;
       opacity: 0.1;
       animation-duration: 12s;
       animation-direction: alternate-reverse;
     }
 
     .wave:nth-child(3) {
-      bottom: 20px;
+      bottom: 16px;
       opacity: 0.06;
       animation-duration: 16s;
     }
@@ -68,139 +74,204 @@
       align-items: center;
       justify-content: center;
       min-height: 100vh;
-      padding: 40px 20px;
+      min-height: 100dvh;
+      padding: 48px 24px;
+      padding-top: max(48px, env(safe-area-inset-top));
+      padding-bottom: max(48px, env(safe-area-inset-bottom));
     }
 
     .logo {
-      width: 160px;
-      height: 160px;
-      border-radius: 24px;
-      margin-bottom: 32px;
+      width: 120px;
+      height: 120px;
+      border-radius: 20px;
+      margin-bottom: 24px;
       box-shadow: 0 0 60px rgba(26, 74, 122, 0.4), 0 0 120px rgba(26, 74, 122, 0.15);
       animation: glow 4s ease-in-out infinite alternate;
     }
 
     @keyframes glow {
-      from { box-shadow: 0 0 60px rgba(26, 74, 122, 0.4), 0 0 120px rgba(26, 74, 122, 0.15); }
-      to { box-shadow: 0 0 80px rgba(45, 100, 160, 0.5), 0 0 160px rgba(45, 100, 160, 0.2); }
+      from { box-shadow: 0 0 40px rgba(26, 74, 122, 0.4), 0 0 80px rgba(26, 74, 122, 0.15); }
+      to { box-shadow: 0 0 60px rgba(45, 100, 160, 0.5), 0 0 120px rgba(45, 100, 160, 0.2); }
     }
 
     h1 {
-      font-size: clamp(2rem, 6vw, 3.5rem);
+      font-size: clamp(1.6rem, 6vw, 3.5rem);
       font-weight: 700;
-      letter-spacing: 0.15em;
+      letter-spacing: 0.12em;
       text-transform: uppercase;
-      margin-bottom: 12px;
+      margin-bottom: 8px;
       background: linear-gradient(135deg, #6899cc, #d4a44a);
       -webkit-background-clip: text;
       -webkit-text-fill-color: transparent;
       background-clip: text;
+      text-align: center;
     }
 
     .tagline {
-      font-size: clamp(0.85rem, 2vw, 1.1rem);
+      font-size: clamp(0.75rem, 2vw, 1.1rem);
       color: #5a6a80;
-      margin-bottom: 48px;
+      margin-bottom: 32px;
       letter-spacing: 0.08em;
+      text-align: center;
+    }
+
+    /* Buttons */
+    .buttons {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 12px;
+      width: 100%;
+      max-width: 320px;
     }
 
     .play-btn {
-      display: inline-block;
-      padding: 18px 64px;
+      display: block;
+      width: 100%;
+      padding: 16px 32px;
       font-family: 'Space Mono', monospace;
-      font-size: 1.2rem;
+      font-size: 1.1rem;
       font-weight: 700;
       letter-spacing: 0.2em;
       text-transform: uppercase;
       text-decoration: none;
+      text-align: center;
       color: #0a0e1a;
       background: linear-gradient(135deg, #d4a44a, #c8923a);
       border: none;
-      border-radius: 6px;
+      border-radius: 8px;
       cursor: pointer;
-      transition: all 0.3s ease;
+      transition: all 0.2s ease;
       box-shadow: 0 4px 24px rgba(212, 164, 74, 0.3);
+      -webkit-touch-callout: none;
+      min-height: 52px;
     }
 
     .play-btn:hover {
       transform: translateY(-2px);
       box-shadow: 0 8px 40px rgba(212, 164, 74, 0.5);
-      background: linear-gradient(135deg, #e0b45a, #d4a44a);
     }
 
     .play-btn:active {
       transform: translateY(0);
+      box-shadow: 0 2px 16px rgba(212, 164, 74, 0.3);
+    }
+
+    .install-btn {
+      display: none;
+      width: 100%;
+      padding: 14px 32px;
+      font-family: 'Space Mono', monospace;
+      font-size: 0.85rem;
+      font-weight: 700;
+      letter-spacing: 0.15em;
+      text-transform: uppercase;
+      text-align: center;
+      color: #8899bb;
+      background: rgba(26, 40, 70, 0.6);
+      border: 1px solid rgba(104, 153, 204, 0.2);
+      border-radius: 8px;
+      cursor: pointer;
+      transition: all 0.2s ease;
+      -webkit-touch-callout: none;
+      min-height: 48px;
+    }
+
+    .install-btn:hover {
+      background: rgba(26, 40, 70, 0.8);
+      border-color: rgba(104, 153, 204, 0.4);
+      color: #aabbdd;
+    }
+
+    .install-btn.visible {
+      display: block;
     }
 
     /* Features */
     .features {
       display: grid;
       grid-template-columns: repeat(2, 1fr);
-      gap: 16px;
-      max-width: 800px;
-      margin-top: 64px;
-      padding: 0 20px;
+      gap: 12px;
+      max-width: 600px;
+      margin-top: 40px;
       width: 100%;
-    }
-
-    @media (max-width: 480px) {
-      .features {
-        grid-template-columns: 1fr;
-        gap: 12px;
-      }
     }
 
     .feature {
       text-align: center;
-      padding: 24px 16px;
-      border: 1px solid rgba(104, 153, 204, 0.1);
+      padding: 16px 12px;
+      border: 1px solid rgba(104, 153, 204, 0.08);
       border-radius: 8px;
       background: rgba(15, 20, 35, 0.5);
     }
 
     .feature-icon {
-      font-size: 1.8rem;
-      margin-bottom: 12px;
-    }
-
-    .feature h3 {
-      font-size: 0.85rem;
-      color: #8899aa;
-      letter-spacing: 0.1em;
-      text-transform: uppercase;
+      font-size: 1.5rem;
       margin-bottom: 8px;
     }
 
+    .feature h3 {
+      font-size: 0.7rem;
+      color: #8899aa;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      margin-bottom: 4px;
+    }
+
     .feature p {
-      font-size: 0.75rem;
+      font-size: 0.65rem;
       color: #4a5a6a;
-      line-height: 1.5;
+      line-height: 1.4;
     }
 
-    /* Install hint */
-    .install-hint {
-      margin-top: 48px;
-      font-size: 0.75rem;
-      color: #3a4a5a;
+    /* Badges */
+    .badges {
+      display: flex;
+      gap: 16px;
+      margin-top: 32px;
+      flex-wrap: wrap;
+      justify-content: center;
+    }
+
+    .badge {
+      font-size: 0.65rem;
+      color: #3a5a7a;
       letter-spacing: 0.05em;
+      display: flex;
+      align-items: center;
+      gap: 4px;
     }
 
-    .install-hint a {
-      color: #5577aa;
-      text-decoration: none;
+    .badge::before {
+      content: '✓';
+      color: #4a7a5a;
+      font-size: 0.7rem;
     }
 
     footer {
       position: relative;
       z-index: 1;
       text-align: center;
-      padding: 24px;
-      font-size: 0.7rem;
+      padding: 20px;
+      font-size: 0.65rem;
       color: #2a3a4a;
       letter-spacing: 0.05em;
     }
 
     footer a { color: #4a6a8a; text-decoration: none; }
+
+    /* Desktop */
+    @media (min-width: 768px) {
+      .logo { width: 160px; height: 160px; border-radius: 24px; margin-bottom: 32px; }
+      .tagline { margin-bottom: 48px; }
+      .buttons { max-width: 360px; }
+      .play-btn { padding: 18px 64px; font-size: 1.2rem; }
+      .features { gap: 24px; margin-top: 64px; }
+      .feature { padding: 24px 16px; }
+      .feature-icon { font-size: 1.8rem; }
+      .feature h3 { font-size: 0.85rem; }
+      .feature p { font-size: 0.75rem; }
+    }
   </style>
 </head>
 <body>
@@ -226,7 +297,11 @@
     <img src="game/icons/icon-512.png" alt="Ocean Outlaws" class="logo">
     <h1>Ocean Outlaws</h1>
     <p class="tagline">Naval combat. Rogue waves. No mercy.</p>
-    <a href="game/" class="play-btn">Play Now</a>
+
+    <div class="buttons">
+      <a href="game/" class="play-btn">Play Now</a>
+      <button id="installBtn" class="install-btn">Install App</button>
+    </div>
 
     <div class="features">
       <div class="feature">
@@ -251,11 +326,56 @@
       </div>
     </div>
 
-    <p class="install-hint">Works offline · Installable as app · <a href="game/">Desktop & mobile</a></p>
+    <div class="badges">
+      <span class="badge">Free to play</span>
+      <span class="badge">Works offline</span>
+      <span class="badge">No download</span>
+      <span class="badge">Installable</span>
+    </div>
   </div>
 
   <footer>
     Built with Three.js · <a href="https://github.com/thunderclawai/ocean-outlaws">Source</a>
   </footer>
+
+  <script>
+    // PWA install prompt
+    var deferredPrompt = null;
+    var installBtn = document.getElementById('installBtn');
+
+    window.addEventListener('beforeinstallprompt', function (e) {
+      e.preventDefault();
+      deferredPrompt = e;
+      installBtn.classList.add('visible');
+    });
+
+    installBtn.addEventListener('click', function () {
+      if (!deferredPrompt) return;
+      deferredPrompt.prompt();
+      deferredPrompt.userChoice.then(function (result) {
+        if (result.outcome === 'accepted') {
+          installBtn.classList.remove('visible');
+        }
+        deferredPrompt = null;
+      });
+    });
+
+    // Hide install button if already installed
+    window.addEventListener('appinstalled', function () {
+      installBtn.classList.remove('visible');
+      deferredPrompt = null;
+    });
+
+    // iOS detection — show manual install hint
+    if (/iPad|iPhone|iPod/.test(navigator.userAgent) && !window.navigator.standalone) {
+      installBtn.textContent = 'Add to Home Screen ↗';
+      installBtn.classList.add('visible');
+      installBtn.addEventListener('click', function () {
+        if (!deferredPrompt) {
+          alert('Tap the Share button (↗) in Safari, then "Add to Home Screen"');
+        }
+      });
+    }
+  </script>
 </body>
 </html>
