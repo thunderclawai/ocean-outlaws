@@ -18,31 +18,31 @@ var PRESETS = {
     visLabel: "CALM"
   },
   rough: {
-    waveAmplitude: 1.8,
-    fogDensity: 0.012,
+    waveAmplitude: 1.3,
+    fogDensity: 0.008,
     fogColor: 0x0c1020,
     waterTint: [0.01, 0.02, 0.04],
-    windX: 3,
-    windZ: 2,
+    windX: 1.0,
+    windZ: 0.7,
     rainDensity: 0.3,
     lightningChance: 0,
-    dimFactor: 0.75,
-    foamIntensity: 0.7,
-    cloudShadow: 0.4,
+    dimFactor: 0.85,
+    foamIntensity: 0.6,
+    cloudShadow: 0.3,
     visLabel: "ROUGH"
   },
   storm: {
-    waveAmplitude: 2.8,
-    fogDensity: 0.022,
+    waveAmplitude: 1.6,
+    fogDensity: 0.013,
     fogColor: 0x080a14,
     waterTint: [0.02, 0.03, 0.06],
-    windX: 7,
-    windZ: 5,
+    windX: 2.0,
+    windZ: 1.5,
     rainDensity: 1.0,
     lightningChance: 0.008,
-    dimFactor: 0.45,
+    dimFactor: 0.55,
     foamIntensity: 1.0,
-    cloudShadow: 0.8,
+    cloudShadow: 0.7,
     visLabel: "STORM"
   }
 };
@@ -97,8 +97,11 @@ export function getWeatherLabel(state) {
 }
 
 // --- get weather dim factor (for day/night integration) ---
+// floor prevents storm + night from creating total blindness
+var MIN_DIM_FACTOR = 0.45;
 export function getWeatherDim(state) {
-  return state.preset.dimFactor !== undefined ? state.preset.dimFactor : 1.0;
+  var dim = state.preset.dimFactor !== undefined ? state.preset.dimFactor : 1.0;
+  return Math.max(MIN_DIM_FACTOR, dim);
 }
 
 // --- get foam intensity ---

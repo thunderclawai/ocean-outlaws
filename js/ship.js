@@ -205,12 +205,21 @@ export function updateShip(ship, input, dt, getWaveHeight, elapsed, fuelMult, up
   ship.posX += Math.sin(ship.heading) * ship.speed * dt;
   ship.posZ += Math.cos(ship.heading) * ship.speed * dt;
 
-  // wind force (from weather system)
-  if (upgradeMults && upgradeMults.windX) {
-    ship.posX += upgradeMults.windX * dt;
-  }
-  if (upgradeMults && upgradeMults.windZ) {
-    ship.posZ += upgradeMults.windZ * dt;
+  // wind force (from weather system) — capped so it never overpowers player input
+  var MAX_WIND_DISPLACEMENT = 1.5;  // max units/sec of drift from wind
+  if (upgradeMults && (upgradeMults.windX || upgradeMults.windZ)) {
+    var rawWindX = upgradeMults.windX || 0;
+    var rawWindZ = upgradeMults.windZ || 0;
+    var windMag = Math.sqrt(rawWindX * rawWindX + rawWindZ * rawWindZ);
+    if (windMag > MAX_WIND_DISPLACEMENT) {
+      var windScale = MAX_WIND_DISPLACEMENT / windMag;
+      rawWindX *= windScale;
+      rawWindZ *= windScale;
+    }
+    // reduce wind effect when player is actively navigating
+    var windDampen = ship.navTarget ? 0.4 : 1.0;
+    ship.posX += rawWindX * windDampen * dt;
+    ship.posZ += rawWindZ * windDampen * dt;
   }
 
   // terrain collision — bounce/stop when hitting land
