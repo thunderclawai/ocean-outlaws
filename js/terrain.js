@@ -64,6 +64,28 @@ function fbm(x, y) {
   return value / maxAmp;  // normalized 0..1
 }
 
+// --- Gaussian blur for smoother, more organic island shapes ---
+function gaussianBlur(data, size, passes) {
+  var tmp = new Float32Array(data.length);
+  // 3x3 Gaussian kernel weights (sigma ~0.85)
+  var k0 = 4 / 16, k1 = 2 / 16, k2 = 1 / 16;
+  for (var p = 0; p < passes; p++) {
+    for (var y = 0; y < size; y++) {
+      for (var x = 0; x < size; x++) {
+        var x0 = Math.max(0, x - 1), x1 = Math.min(size - 1, x + 1);
+        var y0 = Math.max(0, y - 1), y1 = Math.min(size - 1, y + 1);
+        tmp[y * size + x] =
+          data[y * size + x] * k0 +
+          (data[y * size + x0] + data[y * size + x1] +
+           data[y0 * size + x] + data[y1 * size + x]) * k1 +
+          (data[y0 * size + x0] + data[y0 * size + x1] +
+           data[y1 * size + x0] + data[y1 * size + x1]) * k2;
+      }
+    }
+    for (var i = 0; i < data.length; i++) data[i] = tmp[i];
+  }
+}
+
 // --- generate heightmap ---
 function generateHeightmap(seed, difficulty) {
   _seed = seed;
@@ -108,6 +130,9 @@ function generateHeightmap(seed, difficulty) {
       data[iy * size + ix] = h;
     }
   }
+
+  // smooth heightmap for rounder, more natural island profiles
+  gaussianBlur(data, size, 2);
 
   return { data: data, size: size };
 }
@@ -251,20 +276,42 @@ export function terrainBlocksLine(terrain, x1, z1, x2, z2) {
   return false;
 }
 
-// --- build 3D mesh from heightmap ---
+// --- marching squares: interpolated shoreline vertex along cell edge ---
+// Returns the interpolated position (0..1 fraction) where sea level crosses
+function edgeLerp(hA, hB) {
+  var denom = hA - hB;
+  if (Math.abs(denom) < 0.0001) return 0.5;
+  return Math.max(0, Math.min(1, hA / denom));
+}
+
+// Convert heightmap value to mesh Y with gentle beach slope
+function heightToY(h) {
+  if (h <= SEA_LEVEL) return 0;
+  // gradual beach ramp: ease-in for low heights
+  var beachRamp = Math.min(h / BEACH_HEIGHT, 1.0);
+  beachRamp = beachRamp * beachRamp;  // quadratic ease-in for gentle slope
+  return h * TERRAIN_HEIGHT * (0.3 + 0.7 * beachRamp);
+}
+
+// Edge connectivity: edge 0=bottom(0→1), 1=right(1→2), 2=top(3→2), 3=left(0→3)
+var EDGE_FROM = [0, 1, 3, 0];
+var EDGE_TO   = [1, 2, 2, 3];
+
+// --- build 3D mesh from heightmap using marching squares ---
+// Interpolates shoreline edges for smooth, curved coastlines that match
+// the bilinear-interpolated collision boundary exactly.
 function buildTerrainMesh(heightmap) {
   var size = heightmap.size;
   var data = heightmap.data;
   var half = MAP_SIZE / 2;
 
-  // collect only land triangles to reduce polycount
   var positions = [];
   var colors = [];
 
-  var colorLand = new THREE.Color(0x4a7a35);     // brighter green
-  var colorDirt = new THREE.Color(0x8b6914);      // warmer brown
-  var colorBeach = new THREE.Color(0xe8d5a0);     // bright sandy (high contrast)
-  var colorPeak = new THREE.Color(0x5a5a5a);      // rocky grey
+  var colorLand = new THREE.Color(0x4a7a35);
+  var colorDirt = new THREE.Color(0x8b6914);
+  var colorBeach = new THREE.Color(0xe8d5a0);
+  var colorPeak = new THREE.Color(0x5a5a5a);
 
   for (var iy = 0; iy < size - 1; iy++) {
     for (var ix = 0; ix < size - 1; ix++) {
@@ -273,37 +320,62 @@ function buildTerrainMesh(heightmap) {
       var h01 = data[(iy + 1) * size + ix];
       var h11 = data[(iy + 1) * size + ix + 1];
 
-      // skip if all corners are water
-      var anyLand = h00 > SEA_LEVEL || h10 > SEA_LEVEL || h01 > SEA_LEVEL || h11 > SEA_LEVEL;
-      if (!anyLand) continue;
+      // marching squares case index: bit per corner above sea level
+      var caseIdx =
+        (h00 > SEA_LEVEL ? 1 : 0) |
+        (h10 > SEA_LEVEL ? 2 : 0) |
+        (h11 > SEA_LEVEL ? 4 : 0) |
+        (h01 > SEA_LEVEL ? 8 : 0);
 
+      // skip all-water cells
+      if (caseIdx === 0) continue;
+
+      // world-space corners of this cell
       var x0 = (ix / GRID_RES) * MAP_SIZE - half;
       var x1 = ((ix + 1) / GRID_RES) * MAP_SIZE - half;
       var z0 = (iy / GRID_RES) * MAP_SIZE - half;
       var z1 = ((iy + 1) / GRID_RES) * MAP_SIZE - half;
 
-      // clamp heights: water areas stay at sea level
-      var y00 = Math.max(SEA_LEVEL + 0.1, h00) * TERRAIN_HEIGHT;
-      var y10 = Math.max(SEA_LEVEL + 0.1, h10) * TERRAIN_HEIGHT;
-      var y01 = Math.max(SEA_LEVEL + 0.1, h01) * TERRAIN_HEIGHT;
-      var y11 = Math.max(SEA_LEVEL + 0.1, h11) * TERRAIN_HEIGHT;
+      // corners: 0=SW(x0,z0) 1=SE(x1,z0) 2=NE(x1,z1) 3=NW(x0,z1)
+      var cx = [x0, x1, x1, x0];
+      var cz = [z0, z0, z1, z1];
+      var ch = [h00, h10, h11, h01];
+      var cy = [heightToY(h00), heightToY(h10), heightToY(h11), heightToY(h01)];
 
-      // triangle 1: 00, 10, 01
-      positions.push(x0, y00, z0);
-      positions.push(x1, y10, z0);
-      positions.push(x0, y01, z1);
+      // interpolated edge crossing points where sea level meets cell edges
+      var ex = [], ez = [], ey = [];
+      for (var e = 0; e < 4; e++) {
+        var a = EDGE_FROM[e], b = EDGE_TO[e];
+        var t = edgeLerp(ch[a], ch[b]);
+        ex[e] = cx[a] + (cx[b] - cx[a]) * t;
+        ez[e] = cz[a] + (cz[b] - cz[a]) * t;
+        ey[e] = 0;  // shoreline vertices at sea level
+      }
 
-      // triangle 2: 10, 11, 01
-      positions.push(x1, y10, z0);
-      positions.push(x1, y11, z1);
-      positions.push(x0, y01, z1);
+      // all-land: full quad, same as before but with beach slopes
+      if (caseIdx === 15) {
+        pushTri(positions, cx[0], cy[0], cz[0], cx[1], cy[1], cz[1], cx[3], cy[3], cz[3]);
+        pushTri(positions, cx[1], cy[1], cz[1], cx[2], cy[2], cz[2], cx[3], cy[3], cz[3]);
+        var avgH1 = (ch[0] + ch[1] + ch[3]) / 3;
+        var avgH2 = (ch[1] + ch[2] + ch[3]) / 3;
+        colorTriangle(colors, avgH1, colorBeach, colorLand, colorDirt, colorPeak);
+        colorTriangle(colors, avgH2, colorBeach, colorLand, colorDirt, colorPeak);
+        continue;
+      }
 
-      // color per-face based on average height
-      var avgH1 = (h00 + h10 + h01) / 3;
-      var avgH2 = (h10 + h11 + h01) / 3;
-
-      colorTriangle(colors, avgH1, colorBeach, colorLand, colorDirt, colorPeak);
-      colorTriangle(colors, avgH2, colorBeach, colorLand, colorDirt, colorPeak);
+      // marching squares triangulation for partial cells
+      // Each case emits triangles covering only the land portion
+      var tris = marchTris(caseIdx, cx, cy, cz, ex, ey, ez);
+      for (var ti = 0; ti < tris.length; ti += 9) {
+        positions.push(
+          tris[ti], tris[ti + 1], tris[ti + 2],
+          tris[ti + 3], tris[ti + 4], tris[ti + 5],
+          tris[ti + 6], tris[ti + 7], tris[ti + 8]
+        );
+        // average height of the triangle's source data for coloring
+        var triAvgH = Math.max(0, (tris[ti + 1] + tris[ti + 4] + tris[ti + 7]) / (3 * TERRAIN_HEIGHT));
+        colorTriangle(colors, triAvgH, colorBeach, colorLand, colorDirt, colorPeak);
+      }
     }
   }
 
@@ -320,8 +392,43 @@ function buildTerrainMesh(heightmap) {
 
   var mesh = new THREE.Mesh(geometry, material);
   mesh.position.y = 4;  // raise terrain above max wave height
-  mesh.renderOrder = 2; // render after ocean
+  mesh.renderOrder = 2;
   return mesh;
+}
+
+function pushTri(arr, ax, ay, az, bx, by, bz, cx, cy, cz) {
+  arr.push(ax, ay, az, bx, by, bz, cx, cy, cz);
+}
+
+// Marching squares triangle tables. Corners: 0=SW 1=SE 2=NE 3=NW.
+// Edges: 0=bottom 1=right 2=top 3=left. Negative = edge idx (offset by -1).
+// caseIdx bits: corner0=1, corner1=2, corner2=4, corner3=8.
+var MARCH_TABLE = [];
+MARCH_TABLE[1]  = [0, -1, -4];
+MARCH_TABLE[2]  = [1, -2, -1];
+MARCH_TABLE[4]  = [2, -3, -2];
+MARCH_TABLE[8]  = [3, -4, -3];
+MARCH_TABLE[3]  = [0, 1, -2,  0, -2, -4];
+MARCH_TABLE[6]  = [1, 2, -3,  1, -3, -1];
+MARCH_TABLE[12] = [3, -4, 2,  2, -4, -2];
+MARCH_TABLE[9]  = [0, -1, 3,  3, -1, -3];
+MARCH_TABLE[5]  = [0, -1, -4,  2, -3, -2];
+MARCH_TABLE[10] = [1, -2, -1,  3, -4, -3];
+MARCH_TABLE[14] = [1, 2, 3,  1, 3, -4,  1, -4, -1];
+MARCH_TABLE[13] = [0, -1, 3,  3, -1, -2,  3, -2, 2];
+MARCH_TABLE[11] = [0, 1, -2,  0, -2, -3,  0, -3, 3];
+MARCH_TABLE[7]  = [0, 1, 2,  0, 2, -3,  0, -3, -4];
+
+function marchTris(caseIdx, cx, cy, cz, ex, ey, ez) {
+  var table = MARCH_TABLE[caseIdx];
+  if (!table) return [];
+  var out = [];
+  for (var i = 0; i < table.length; i++) {
+    var v = table[i];
+    if (v >= 0) { out.push(cx[v], cy[v], cz[v]); }
+    else { var e = -v - 1; out.push(ex[e], ey[e], ez[e]); }
+  }
+  return out;
 }
 
 function colorTriangle(colors, avgH, beach, land, dirt, peak) {
@@ -338,7 +445,6 @@ function colorTriangle(colors, avgH, beach, land, dirt, peak) {
     var t = Math.min(1, (avgH - 0.6) / 0.4);
     c = land.clone().lerp(peak, t);
   }
-  // 3 vertices per triangle, same color (flat shading)
   for (var i = 0; i < 3; i++) {
     colors.push(c.r, c.g, c.b);
   }
