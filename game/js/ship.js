@@ -1,7 +1,9 @@
 // ship.js — procedural ship model, physics state, update loop
 import * as THREE from "three";
 import { buildClassMesh } from "./shipModels.js";
-import { collideWithTerrain, applyEdgeBoundary } from "./terrain.js";
+import { collideWithTerrain, applyEdgeBoundary, getTerrainAvoidance } from "./terrain.js";
+import { getOverridePath } from "./artOverrides.js";
+import { loadFbxVisual } from "./fbxVisual.js";
 
 // --- default physics tuning (used as fallback) ---
 var DEFAULT_MAX_SPEED = 10;
@@ -18,6 +20,9 @@ var TILT_LERP = 6;            // pitch/roll smoothing speed
 var NAV_ARRIVE_RADIUS = 3;
 var NAV_SLOW_RADIUS = 15;
 var NAV_TURN_SPEED = 2.5;
+var TERRAIN_AVOID_RANGE = 15;
+var TERRAIN_SLOW_MULT = 0.72;
+var TERRAIN_AVOID_TURN = 4.4;
 
 // --- fallback procedural ship geometry (original design) ---
 function buildShipMesh() {
@@ -91,6 +96,41 @@ function buildShipMesh() {
   return group;
 }
 
+function placeTurretsFromBounds(mesh, turrets) {
+  if (!turrets || !turrets.length) return;
+  var box = new THREE.Box3().setFromObject(mesh);
+  var size = new THREE.Vector3();
+  var center = new THREE.Vector3();
+  box.getSize(size);
+  box.getCenter(center);
+  var len = Math.max(2, size.z);
+  var y = box.min.y + Math.max(0.2, size.y * 0.35);
+  for (var i = 0; i < turrets.length; i++) {
+    var t = turrets[i];
+    var zi = 0;
+    if (turrets.length === 1) zi = center.z;
+    else zi = box.max.z - (len * 0.25) - (i * len * 0.45 / (turrets.length - 1));
+    t.position.set(0, y, zi);
+    t.rotation.set(0, 0, 0);
+    t.visible = false;
+    if (!t.parent) mesh.add(t);
+  }
+}
+
+function applyShipOverrideAsync(mesh, classKey) {
+  var path = getOverridePath(classKey);
+  if (!path) return;
+  var turrets = mesh.userData.turrets || [];
+  loadFbxVisual(path, 8, true).then(function (visual) {
+    while (mesh.children.length) mesh.remove(mesh.children[0]);
+    mesh.add(visual);
+    placeTurretsFromBounds(mesh, turrets);
+    mesh.userData.turrets = turrets;
+  }).catch(function () {
+    // keep procedural fallback on failure
+  });
+}
+
 // --- create ship ---
 // classConfig: optional { stats: { maxSpeed, turnRate, accel, ... }, key: "destroyer" }
 export function createShip(classConfig) {
@@ -120,6 +160,8 @@ export function createShip(classConfig) {
     _smoothPitch: 0,
     _smoothRoll: 0
   };
+
+  if (classConfig && classConfig.key) applyShipOverrideAsync(mesh, classConfig.key);
 
   return state;
 }
@@ -151,6 +193,7 @@ export function updateShip(ship, input, dt, getWaveHeight, elapsed, fuelMult, up
 
   var effectiveMaxSpeed = baseMax * speedMult * (fuelMult !== undefined ? fuelMult : 1);
   var effectiveAccel = baseAccel * accelMult;
+  var avoid = terrain ? getTerrainAvoidance(terrain, ship.posX, ship.posZ, TERRAIN_AVOID_RANGE) : { factor: 0, awayX: 0, awayZ: 0 };
 
   if (ship.navTarget) {
     var dx = ship.navTarget.x - ship.posX;
@@ -173,6 +216,7 @@ export function updateShip(ship, input, dt, getWaveHeight, elapsed, fuelMult, up
 
       var speedFactor = Math.min(1, dist / NAV_SLOW_RADIUS);
       var desiredSpeed = effectiveMaxSpeed * speedFactor;
+      if (avoid.factor > 0) desiredSpeed *= Math.max(0.18, 1 - avoid.factor * TERRAIN_SLOW_MULT);
       if (Math.abs(angleDiff) < Math.PI * 0.5) {
         if (ship.speed < desiredSpeed) {
           ship.speed += effectiveAccel * dt;
@@ -185,6 +229,14 @@ export function updateShip(ship, input, dt, getWaveHeight, elapsed, fuelMult, up
         ship.speed -= DRAG * dt;
         if (ship.speed < 0) ship.speed = 0;
       }
+
+      if (avoid.factor > 0.12) {
+        var awayHeading = Math.atan2(avoid.awayX, avoid.awayZ);
+        var awayDiff = normalizeAngle(awayHeading - ship.heading);
+        var avoidTurn = TERRAIN_AVOID_TURN * avoid.factor * dt;
+        if (Math.abs(awayDiff) < avoidTurn) ship.heading = awayHeading;
+        else ship.heading += Math.sign(awayDiff) * avoidTurn;
+      }
     }
   } else {
     // no nav target — decelerate to stop
@@ -194,6 +246,14 @@ export function updateShip(ship, input, dt, getWaveHeight, elapsed, fuelMult, up
     } else if (ship.speed < 0) {
       ship.speed += DRAG * dt;
       if (ship.speed > 0) ship.speed = 0;
+    }
+    if (avoid.factor > 0.12) {
+      var awayHeadingIdle = Math.atan2(avoid.awayX, avoid.awayZ);
+      var awayDiffIdle = normalizeAngle(awayHeadingIdle - ship.heading);
+      var idleTurn = TERRAIN_AVOID_TURN * Math.max(0.25, avoid.factor) * dt;
+      if (Math.abs(awayDiffIdle) < idleTurn) ship.heading = awayHeadingIdle;
+      else ship.heading += Math.sign(awayDiffIdle) * idleTurn;
+      ship.speed = Math.max(ship.speed, effectiveMaxSpeed * 0.18 * avoid.factor);
     }
   }
 
@@ -228,8 +288,8 @@ export function updateShip(ship, input, dt, getWaveHeight, elapsed, fuelMult, up
     if (col.collided) {
       ship.posX = col.newX;
       ship.posZ = col.newZ;
-      ship.speed *= -0.3;  // bounce back
-      if (ship.navTarget) ship.navTarget = null;  // cancel nav on collision
+      ship.speed *= 0.45;
+      if (ship.speed < 0) ship.speed = 0;
     }
   }
 

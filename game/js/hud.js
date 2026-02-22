@@ -427,8 +427,8 @@ export function hideOverlay() {
   overlay.style.display = "none";
 }
 
-export function updateMinimap(playerX, playerZ, playerHeading, enemies, pickups, ports, remotePlayers) {
-  renderMinimap(playerX, playerZ, playerHeading, enemies, pickups, ports, remotePlayers);
+export function updateMinimap(playerX, playerZ, playerHeading, enemies, pickups, ports, terrainMarkers, remotePlayers) {
+  renderMinimap(playerX, playerZ, playerHeading, enemies, pickups, ports, terrainMarkers, remotePlayers);
 }
 
 // --- main HUD update ---
