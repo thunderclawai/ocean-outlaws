@@ -1,6 +1,7 @@
 // terrainComposite.js — composition-field island placement with FBX models
 import * as THREE from "three";
 import { loadFbxVisual } from "./fbxVisual.js";
+import { getQualityConfig } from "./mobile.js";
 
 var TERRAIN_VISUAL_Y_OFFSET = 4.0;
 var VISUAL_COLLIDER_PAD = 0.35;
@@ -111,13 +112,15 @@ export async function addCompositeFieldVisual(root, terrain, seed) {
   var defs = await loadCompositePack();
   if (!defs || defs.length === 0) return { itemsPlaced: 0, instancesPlaced: 0 };
 
+  var qCfg = getQualityConfig();
+  var maxInstances = qCfg.maxCompositeInstances || MAX_COMPOSITE_INSTANCES;
   var rng = seededRand(seed + 4041);
   var centers = [];
   var itemsPlaced = 0;
   var instancesPlaced = 0;
   var used = {};
 
-  while (instancesPlaced < MAX_COMPOSITE_INSTANCES) {
+  while (instancesPlaced < maxInstances) {
     if (instancesPlaced >= MIN_COMPOSITE_INSTANCES && itemsPlaced >= MIN_COMPOSITE_OBJECTS) break;
 
     var chosenIdx = Math.floor(rng() * defs.length);
@@ -254,9 +257,14 @@ export async function addTieredIslandFieldVisual(root, terrain, heightmap, seed)
   try {
     var template = await loadFbxVisual(SMALL_ISLAND_MODEL, 20, true);
     var total = 0;
-    total += tryPlace(MIN_BIG_ISLANDS, 1.7, 2.05, 38, template, "island_big");
-    total += tryPlace(MIN_MEDIUM_ISLANDS, 1.2, 1.55, 30, template, "island_mid");
-    total += tryPlace(MIN_SMALL_ISLANDS, 0.82, 1.12, 21, template, "island_small");
+    var qCfg2 = getQualityConfig();
+    var islandScale = qCfg2.maxCompositeInstances ? qCfg2.maxCompositeInstances / MAX_COMPOSITE_INSTANCES : 1;
+    var bigCount = Math.max(1, Math.round(MIN_BIG_ISLANDS * islandScale));
+    var medCount = Math.max(2, Math.round(MIN_MEDIUM_ISLANDS * islandScale));
+    var smallCount = Math.max(3, Math.round(MIN_SMALL_ISLANDS * islandScale));
+    total += tryPlace(bigCount, 1.7, 2.05, 38, template, "island_big");
+    total += tryPlace(medCount, 1.2, 1.55, 30, template, "island_mid");
+    total += tryPlace(smallCount, 0.82, 1.12, 21, template, "island_small");
     return total;
   } catch (e) {
     return 0;
