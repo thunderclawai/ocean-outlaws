@@ -18,37 +18,37 @@ var SHIP_SLOT_FALLBACK = [
 
 var LIB = {
   ship: [
-    { label: "Ship Small 3", path: "assets/Palmov Island/Low Poly Cartoon Sailing Ships/Models/ships small/ship small 3.fbx", fit: 8 },
-    { label: "Ship Medium 2", path: "assets/Palmov Island/Low Poly Cartoon Sailing Ships/Models/ships medium/ship medium 2.fbx", fit: 10 },
-    { label: "Ship Large 2", path: "assets/Palmov Island/Low Poly Cartoon Sailing Ships/Models/ships large/ship large 2.fbx", fit: 12 },
-    { label: "Pirate Large 1", path: "assets/Palmov Island/Low Poly Cartoon Sailing Ships/Models/ships large/pirate ship large 1.fbx", fit: 13 },
-    { label: "Pirate Large 2", path: "assets/Palmov Island/Low Poly Cartoon Sailing Ships/Models/ships large/pirate ship large 2.fbx", fit: 13 }
+    { label: "Ship Small 3", path: "assets/models/ships-palmov/small/ship-small-3.fbx", fit: 8 },
+    { label: "Ship Medium 2", path: "assets/models/ships-palmov/medium/ship-medium-2.fbx", fit: 10 },
+    { label: "Ship Large 2", path: "assets/models/ships-palmov/large/ship-large-2.fbx", fit: 12 },
+    { label: "Pirate Large 1", path: "assets/models/ships-palmov/large/pirate-ship-large-1.fbx", fit: 13 },
+    { label: "Pirate Large 2", path: "assets/models/ships-palmov/large/pirate-ship-large-2.fbx", fit: 13 }
   ],
   tree: [
-    { label: "Palm Large", path: "assets/Palmov Island/Low Poly Sea Locations Pack/Models/Trees/Palm trees/palm tree large.fbx", fit: 11 },
-    { label: "Palm Bent", path: "assets/Palmov Island/Low Poly Sea Locations Pack/Models/Trees/Palm trees/palm tree bent.fbx", fit: 9 },
-    { label: "Palm Small", path: "assets/Palmov Island/Low Poly Sea Locations Pack/Models/Trees/Palm trees/palm tree small.fbx", fit: 7 }
+    { label: "Palm Large", path: "assets/models/trees/palm/palm-tree-large.fbx", fit: 11 },
+    { label: "Palm Bent", path: "assets/models/trees/palm/palm-tree-bent.fbx", fit: 9 },
+    { label: "Palm Small", path: "assets/models/trees/palm/palm-tree-small.fbx", fit: 7 }
   ],
   island: [
-    { label: "Stone Large 2", path: "assets/Palmov Island/Low Poly Sea Locations Pack/Models/Stones/Stones large/stone large 2.fbx", fit: 10 },
-    { label: "Stone Small 6", path: "assets/Palmov Island/Low Poly Sea Locations Pack/Models/Stones/Stones small/stone small 6.fbx", fit: 6 },
-    { label: "Island Arch", path: "assets/Palmov Island/Low Poly Sea Locations Pack/Models/Islands/island mountain arch.fbx", fit: 20 },
-    { label: "Island Lighthouse Pier", path: "assets/Palmov Island/Low Poly Sea Locations Pack/Models/Islands/island lighthouse pier.fbx", fit: 22 }
+    { label: "Stone Large 2", path: "assets/models/stones/large/stone-large-2.fbx", fit: 10 },
+    { label: "Stone Small 6", path: "assets/models/stones/small/stone-small-6.fbx", fit: 6 },
+    { label: "Island Arch", path: "assets/models/islands/island-mountain-arch.fbx", fit: 20 },
+    { label: "Island Lighthouse Pier", path: "assets/models/islands/island-lighthouse-pier.fbx", fit: 22 }
   ],
   port: [
-    { label: "Trade Port Land", path: "assets/Palmov Island/Low Poly Sea Locations Pack/Models/Lands/land trade port.fbx", fit: 18 },
-    { label: "Pirate Seaport Land", path: "assets/Palmov Island/Low Poly Sea Locations Pack/Models/Lands/land pirate seaport.fbx", fit: 18 },
-    { label: "Wooden Pier", path: "assets/Palmov Island/Low Poly Sea Locations Pack/Models/Environment/Wooden piers/wooden pier.fbx", fit: 18 },
-    { label: "Wooden Pier 2", path: "assets/Palmov Island/Low Poly Sea Locations Pack/Models/Environment/Wooden piers/wooden pier 2.fbx", fit: 18 },
-    { label: "Wooden Pier 3", path: "assets/Palmov Island/Low Poly Sea Locations Pack/Models/Environment/Wooden piers/wooden pier 3.fbx", fit: 18 },
-    { label: "Wooden Pier 4", path: "assets/Palmov Island/Low Poly Sea Locations Pack/Models/Environment/Wooden piers/wooden pier 4.fbx", fit: 18 },
-    { label: "Wooden Pier 5", path: "assets/Palmov Island/Low Poly Sea Locations Pack/Models/Environment/Wooden piers/wooden pier 5.fbx", fit: 18 },
-    { label: "Destroyed Wooden Pier", path: "assets/Palmov Island/Low Poly Sea Locations Pack/Models/Environment/destroyed wooden pier.fbx", fit: 18 }
+    { label: "Trade Port Land", path: "assets/models/lands/land-trade-port.fbx", fit: 18 },
+    { label: "Pirate Seaport Land", path: "assets/models/lands/land-pirate-seaport.fbx", fit: 18 },
+    { label: "Wooden Pier", path: "assets/models/environment/wooden-piers/wooden-pier.fbx", fit: 18 },
+    { label: "Wooden Pier 2", path: "assets/models/environment/wooden-piers/wooden-pier-2.fbx", fit: 18 },
+    { label: "Wooden Pier 3", path: "assets/models/environment/wooden-piers/wooden-pier-3.fbx", fit: 18 },
+    { label: "Wooden Pier 4", path: "assets/models/environment/wooden-piers/wooden-pier-4.fbx", fit: 18 },
+    { label: "Wooden Pier 5", path: "assets/models/environment/wooden-piers/wooden-pier-5.fbx", fit: 18 },
+    { label: "Destroyed Wooden Pier", path: "assets/models/environment/destroyed-wooden-pier.fbx", fit: 18 }
   ],
   water: [
-    { label: "Cartoon Water", path: "assets/Palmov Island/Low Poly Cartoon Sailing Ships/Models/water.fbx", fit: 26 },
-    { label: "Trade Port Water", path: "assets/Palmov Island/Low Poly Sea Locations Pack/Models/Waters/water location trade port.fbx", fit: 26 },
-    { label: "Pirate Seaport Water", path: "assets/Palmov Island/Low Poly Sea Locations Pack/Models/Waters/water location pirate seaport.fbx", fit: 26 }
+    { label: "Cartoon Water", path: "assets/models/ships-palmov/water.fbx", fit: 26 },
+    { label: "Trade Port Water", path: "assets/models/waters/water-location-trade-port.fbx", fit: 26 },
+    { label: "Pirate Seaport Water", path: "assets/models/waters/water-location-pirate-seaport.fbx", fit: 26 }
   ]
 };
 
@@ -139,13 +139,10 @@ function remapTextureUrl(url, sourcePath) {
   var isMain = lower.indexOf("texture%20main.png") >= 0 || lower.indexOf("texture main.png") >= 0;
   if (!isMain) return url;
   var sp = String(sourcePath).toLowerCase();
-  if (sp.indexOf("low poly cartoon sailing ships") >= 0) {
-    return "assets/Palmov Island/Low Poly Cartoon Sailing Ships/Textures/texture main.png";
+  if (sp.indexOf("models/ships") >= 0) {
+    return "assets/textures/ships.png";
   }
-  if (sp.indexOf("low poly sea locations pack") >= 0) {
-    return "assets/Palmov Island/Low Poly Sea Locations Pack/Textures/texture main.png";
-  }
-  return url;
+  return "assets/textures/locations.png";
 }
 
 var cache = {};

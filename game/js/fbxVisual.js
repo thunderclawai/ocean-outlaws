@@ -9,17 +9,10 @@ function remapTextureUrl(url, sourcePath) {
   var isMain = lower.indexOf("texture%20main.png") >= 0 || lower.indexOf("texture main.png") >= 0;
   if (!isMain) return url;
   var sp = String(sourcePath).toLowerCase();
-  if (sp.indexOf("low poly cartoon sailing ships") >= 0) {
-    return "assets/Palmov Island/Low Poly Cartoon Sailing Ships/Textures/texture main.png";
-  }
-  if (sp.indexOf("low poly sea locations pack") >= 0) {
-    return "assets/Palmov Island/Low Poly Sea Locations Pack/Textures/texture main.png";
-  }
-  // fallback for manifest-based paths under assets/models/ships/
-  if (sp.indexOf("models/ships/") >= 0) {
+  if (sp.indexOf("models/ships") >= 0) {
     return "assets/textures/ships.png";
   }
-  return url;
+  return "assets/textures/locations.png";
 }
 
 function fitToSize(root, target) {

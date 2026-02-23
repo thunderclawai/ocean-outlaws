@@ -4,6 +4,9 @@
 *.unity
 *.mat
 
+# Raw source packs
+game/assets/Palmov Island/
+
 # OS files
 .DS_Store
 Thumbs.db
