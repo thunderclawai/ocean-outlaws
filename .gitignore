@@ -1,0 +1,17 @@
+# Unity cruft
+*.meta
+*.prefab
+*.unity
+*.mat
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Node
+node_modules/
+
+# Editor
+*.swp
+*.swo
+*~
