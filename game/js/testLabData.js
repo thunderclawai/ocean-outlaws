@@ -1,5 +1,4 @@
 // testLabData.js — catalog, state, presets, normalization for Test Lab
-import { loadTemplate, fitToSize } from "./modelLoader.js";
 
 var STORAGE_KEY = "ocean_outlaws_test_lab_v1";
 var CATALOG_URL = "data/testLabModelCatalog.json";

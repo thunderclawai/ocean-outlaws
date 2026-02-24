@@ -2,7 +2,7 @@
 import * as THREE from "three";
 import { isLand, collideWithTerrain, terrainBlocksLine } from "./terrain.js";
 import { getOverridePath, getOverrideSize } from "./artOverrides.js";
-import { loadModel } from "./modelLoader.js";
+import { loadModel, setFactionColor } from "./modelLoader.js";
 import { nextRandom } from "./rng.js";
 
 // --- faction definitions ---
@@ -197,12 +197,14 @@ function placeEnemyTurretFromBounds(mesh, turret) {
   if (!turret.parent) mesh.add(turret);
 }
 
-function applyEnemyOverrideAsync(mesh) {
+function applyEnemyOverrideAsync(mesh, faction) {
   var path = getOverridePath("enemy_patrol");
   if (!path) return;
   var fitSize = getOverrideSize("enemy_patrol") || 6;
   var turret = mesh.userData.turret || null;
+  var fDef = FACTIONS[faction] || FACTIONS.pirate;
   loadModel(path, fitSize, true).then(function (visual) {
+    setFactionColor(visual, fDef.hullColor);
     while (mesh.children.length) mesh.remove(mesh.children[0]);
     mesh.add(visual);
     placeEnemyTurretFromBounds(mesh, turret);
@@ -295,7 +297,7 @@ function spawnEnemy(manager, playerX, playerZ, scene, waveConfig, terrain) {
   } while (terrain && isLand(terrain, x, z) && attempts < 30);
 
   var mesh = buildEnemyMesh(faction);
-  applyEnemyOverrideAsync(mesh);
+  applyEnemyOverrideAsync(mesh, faction);
   mesh.position.set(x, 0.3, z);
 
   var heading = Math.atan2(playerX - x, playerZ - z);
