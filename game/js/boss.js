@@ -208,13 +208,32 @@ function spawnTelegraph(boss, targetX, targetZ, radius, duration, scene) {
   });
 }
 
+// --- pick the boss fire point whose world position is most aligned with the firing angle ---
+function getBossFireOrigin(boss, angle) {
+  var firePoints = boss.mesh.userData.turrets;
+  var dirX = Math.sin(angle);
+  var dirZ = Math.cos(angle);
+  if (firePoints && firePoints.length > 0) {
+    var best = null;
+    var bestDot = -Infinity;
+    var wp = new THREE.Vector3();
+    for (var i = 0; i < firePoints.length; i++) {
+      firePoints[i].getWorldPosition(wp);
+      var dot = (wp.x - boss.posX) * dirX + (wp.z - boss.posZ) * dirZ;
+      if (dot > bestDot) { bestDot = dot; best = wp.clone(); }
+    }
+    if (best) return best;
+  }
+  // fallback: offset from boss centre in firing direction
+  return new THREE.Vector3(boss.posX + dirX * 3, 1.5, boss.posZ + dirZ * 3);
+}
+
 // --- fire a single boss projectile ---
 function fireBossProjectile(boss, angle, speed, scene) {
   ensureGeo();
-  var startX = boss.posX + Math.sin(angle) * 3;
-  var startZ = boss.posZ + Math.cos(angle) * 3;
+  var origin = getBossFireOrigin(boss, angle);
   var mesh = new THREE.Mesh(projGeo, projMat.clone());
-  mesh.position.set(startX, 1.5, startZ);
+  mesh.position.copy(origin);
   scene.add(mesh);
 
   boss.projectiles.push({
