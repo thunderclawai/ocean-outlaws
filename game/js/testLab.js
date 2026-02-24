@@ -1,8 +1,7 @@
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { TransformControls } from "three/addons/controls/TransformControls.js";
-import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
-import { DRACOLoader } from "three/addons/loaders/DRACOLoader.js";
+import { loadTemplate, fitToSize } from "./modelLoader.js";
 
 var STORAGE_KEY = "ocean_outlaws_test_lab_v1";
 var CATALOG_URL = "data/testLabModelCatalog.json";
@@ -135,26 +134,6 @@ function sanitizeColor(value, fallback) {
   return fallback;
 }
 
-var _dracoLoader = new DRACOLoader();
-_dracoLoader.setDecoderPath("https://www.gstatic.com/draco/versioned/decoders/1.5.7/");
-_dracoLoader.setDecoderConfig({ type: "js" });
-var _gltfLoader = new GLTFLoader();
-_gltfLoader.setDRACOLoader(_dracoLoader);
-
-var cache = {};
-function loadTemplate(path) {
-  if (cache[path]) return cache[path];
-  cache[path] = new Promise(function (resolve, reject) {
-    _gltfLoader.load(
-      encodeURI(path),
-      function (gltf) { resolve(gltf.scene); },
-      undefined,
-      reject
-    );
-  });
-  return cache[path];
-}
-
 function applyFlat(root) {
   root.traverse(function (o) {
     if (!o.isMesh || !o.material) return;
@@ -164,21 +143,6 @@ function applyFlat(root) {
     o.material.flatShading = true;
     o.material.needsUpdate = true;
   });
-}
-
-function fitToSize(root, target) {
-  var box = new THREE.Box3().setFromObject(root);
-  var size = new THREE.Vector3();
-  var center = new THREE.Vector3();
-  box.getSize(size);
-  box.getCenter(center);
-  var maxDim = Math.max(size.x, size.y, size.z);
-  if (maxDim > 0.0001) root.scale.setScalar(target / maxDim);
-  box.setFromObject(root);
-  box.getCenter(center);
-  root.position.x -= center.x;
-  root.position.z -= center.z;
-  root.position.y -= box.min.y;
 }
 
 function optionByPath(type, path) {

@@ -13,7 +13,7 @@ _dracoLoader.setDecoderConfig({ type: "js" });
 var _gltfLoader = new GLTFLoader();
 _gltfLoader.setDRACOLoader(_dracoLoader);
 
-function fitToSize(root, target) {
+export function fitToSize(root, target) {
   var box = new THREE.Box3().setFromObject(root);
   var size = new THREE.Vector3();
   var center = new THREE.Vector3();
@@ -93,7 +93,7 @@ function enforceTriBudget(root, budget) {
   });
 }
 
-function loadTemplate(path) {
+export function loadTemplate(path) {
   if (cache[path]) return cache[path];
   cache[path] = new Promise(function (resolve, reject) {
     _gltfLoader.load(
@@ -115,9 +115,6 @@ export async function loadModel(path, fitSize, flatShaded) {
   if (qCfg.maxTriangles > 0) enforceTriBudget(visual, qCfg.maxTriangles);
   return visual;
 }
-
-// Backward-compatible alias so callers migrating from fbxVisual can switch incrementally
-export var loadFbxVisual = loadModel;
 
 export function setFactionColor(shipScene, hexColor) {
   shipScene.traverse(function (child) {
