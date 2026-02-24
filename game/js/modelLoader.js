@@ -1,20 +1,17 @@
-// fbxVisual.js — shared FBX loading/fit helpers for runtime model overrides
+// modelLoader.js — GLB asset loader using GLTFLoader + DRACOLoader (replaces fbxVisual.js)
 import * as THREE from "three";
-import { FBXLoader } from "three/addons/loaders/FBXLoader.js";
+import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
+import { DRACOLoader } from "three/addons/loaders/DRACOLoader.js";
 import { getQualityConfig } from "./mobile.js";
 
 var cache = {};
 
-function remapTextureUrl(url, sourcePath) {
-  var lower = String(url).toLowerCase();
-  var isMain = lower.indexOf("texture%20main.png") >= 0 || lower.indexOf("texture main.png") >= 0;
-  if (!isMain) return url;
-  var sp = String(sourcePath).toLowerCase();
-  if (sp.indexOf("models/ships") >= 0) {
-    return "assets/textures/ships.png";
-  }
-  return "assets/textures/locations.png";
-}
+var _dracoLoader = new DRACOLoader();
+_dracoLoader.setDecoderPath("https://www.gstatic.com/draco/versioned/decoders/1.5.7/");
+_dracoLoader.setDecoderConfig({ type: "js" });
+
+var _gltfLoader = new GLTFLoader();
+_gltfLoader.setDRACOLoader(_dracoLoader);
 
 function fitToSize(root, target) {
   var box = new THREE.Box3().setFromObject(root);
@@ -39,7 +36,6 @@ function applyFlat(root) {
     for (var i = 0; i < mats.length; i++) {
       var m = mats[i];
       var col = m.color ? m.color.clone() : new THREE.Color(0xcccccc);
-      // boost saturation for cartoon vibrancy
       var hsl = {};
       col.getHSL(hsl);
       col.setHSL(hsl.h, Math.min(1, hsl.s * 1.3 + 0.05), hsl.l);
@@ -100,16 +96,17 @@ function enforceTriBudget(root, budget) {
 function loadTemplate(path) {
   if (cache[path]) return cache[path];
   cache[path] = new Promise(function (resolve, reject) {
-    var loader = new FBXLoader();
-    loader.manager.setURLModifier(function (url) {
-      return remapTextureUrl(url, path);
-    });
-    loader.load(encodeURI(path), resolve, undefined, reject);
+    _gltfLoader.load(
+      encodeURI(path),
+      function (gltf) { resolve(gltf.scene); },
+      undefined,
+      reject
+    );
   });
   return cache[path];
 }
 
-export async function loadFbxVisual(path, fitSize, flatShaded) {
+export async function loadModel(path, fitSize, flatShaded) {
   var tpl = await loadTemplate(path);
   var visual = tpl.clone(true);
   fitToSize(visual, fitSize || 10);
@@ -117,4 +114,16 @@ export async function loadFbxVisual(path, fitSize, flatShaded) {
   var qCfg = getQualityConfig();
   if (qCfg.maxTriangles > 0) enforceTriBudget(visual, qCfg.maxTriangles);
   return visual;
+}
+
+// Backward-compatible alias so callers migrating from fbxVisual can switch incrementally
+export var loadFbxVisual = loadModel;
+
+export function setFactionColor(shipScene, hexColor) {
+  shipScene.traverse(function (child) {
+    if (child.isMesh && child.name.toLowerCase().indexOf("sail") >= 0) {
+      child.material = child.material.clone();
+      child.material.color.set(hexColor);
+    }
+  });
 }

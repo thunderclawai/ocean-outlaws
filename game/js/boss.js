@@ -4,7 +4,7 @@ import { buildBossMesh } from "./bossModels.js";
 import { nextRandom } from "./rng.js";
 import { collideWithTerrain, isLand } from "./terrain.js";
 import { getOverridePath, getOverrideSize } from "./artOverrides.js";
-import { loadFbxVisual } from "./fbxVisual.js";
+import { loadModel } from "./modelLoader.js";
 import { placeTurretsFromBounds } from "./ship.js";
 
 // --- boss definitions ---
@@ -79,7 +79,7 @@ function applyBossOverrideAsync(mesh, bossType) {
   var fit = getOverrideSize(slot) || (bossType === "carrier" ? 18 : 16);
   var turrets = mesh.userData.turrets || [];
   var tentacles = mesh.userData.tentacles || [];
-  loadFbxVisual(path, fit, true).then(function (visual) {
+  loadModel(path, fit, true).then(function (visual) {
     while (mesh.children.length) mesh.remove(mesh.children[0]);
     mesh.add(visual);
     // re-attach turrets positioned on the new model

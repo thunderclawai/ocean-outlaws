@@ -3,7 +3,7 @@ import * as THREE from "three";
 import { buildClassMesh } from "./shipModels.js";
 import { collideWithTerrain, applyEdgeBoundary, getTerrainAvoidance } from "./terrain.js";
 import { getOverridePath, getOverrideSize } from "./artOverrides.js";
-import { loadFbxVisual } from "./fbxVisual.js";
+import { loadModel } from "./modelLoader.js";
 
 // --- default physics tuning (used as fallback) ---
 var DEFAULT_MAX_SPEED = 10;
@@ -97,7 +97,7 @@ function buildShipMesh() {
   return group;
 }
 
-// --- reposition turrets onto the bounding box of an FBX model ---
+// --- reposition turrets onto the bounding box of a GLB model ---
 export function placeTurretsFromBounds(mesh, turrets) {
   if (!turrets || turrets.length === 0) return;
   var box = new THREE.Box3().setFromObject(mesh);
@@ -115,13 +115,13 @@ export function placeTurretsFromBounds(mesh, turrets) {
   }
 }
 
-// --- async FBX override: replace procedural mesh with Palmov model ---
+// --- async GLB override: replace procedural mesh with Palmov model ---
 function applyShipOverrideAsync(mesh, classKey) {
   var path = getOverridePath(classKey);
   if (!path) return;
   var fitSize = getOverrideSize(classKey) || 8;
   var turrets = mesh.userData.turrets || [];
-  loadFbxVisual(path, fitSize, true).then(function (visual) {
+  loadModel(path, fitSize, true).then(function (visual) {
     // snapshot children to preserve (turrets handled separately; keep lights like lantern)
     var keep = [];
     for (var i = 0; i < mesh.children.length; i++) {
@@ -157,7 +157,7 @@ export function createShip(classConfig) {
     mesh = buildShipMesh();
   }
 
-  // attempt to load FBX model override (async, falls back to procedural)
+  // attempt to load GLB model override (async, falls back to procedural)
   if (classConfig && classConfig.key) {
     applyShipOverrideAsync(mesh, classConfig.key);
   }

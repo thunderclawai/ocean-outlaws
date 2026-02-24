@@ -6,14 +6,14 @@
 game/assets/
 ├── models/
 │   ├── ships/           # Playable + enemy vessels
-│   │   ├── sloop.fbx
-│   │   ├── brigantine.fbx
-│   │   ├── galleon.fbx
-│   │   ├── manowar.fbx
-│   │   ├── enemy-patrol.fbx
-│   │   ├── boss-blackthorn.fbx
-│   │   ├── boss-widow.fbx
-│   │   └── boss-crane.fbx
+│   │   ├── sloop.glb
+│   │   ├── brigantine.glb
+│   │   ├── galleon.glb
+│   │   ├── manowar.glb
+│   │   ├── enemy-patrol.glb
+│   │   ├── boss-blackthorn.glb
+│   │   ├── boss-widow.glb
+│   │   └── boss-crane.glb
 │   ├── environment/     # Islands, rocks, terrain pieces
 │   │   ├── islands/
 │   │   ├── mountains/
@@ -45,10 +45,10 @@ game/assets/
 
 ## Naming Conventions
 
-- **All lowercase, kebab-case**: `pirate-ship-large-1.fbx` not `pirate ship large 1.fbx`
+- **All lowercase, kebab-case**: `pirate-ship-large-1.glb` not `pirate ship large 1.glb`
 - **No spaces in filenames** — ever. Spaces break URL encoding and CLI tools.
-- **Descriptive game names over pack names**: `sloop.fbx` not `ship medium 5.fbx`
-- **Numbered variants use suffix**: `palm-tree-1.fbx`, `palm-tree-2.fbx`
+- **Descriptive game names over pack names**: `sloop.glb` not `ship medium 5.glb`
+- **Numbered variants use suffix**: `palm-tree-1.glb`, `palm-tree-2.glb`
 - **Prefixed by role for ships**: player ships by class name, enemies by `enemy-`, bosses by `boss-`
 
 ## File Formats
@@ -97,14 +97,14 @@ loader.setDRACOLoader(dracoLoader);
 {
   "version": 1,
   "ships": {
-    "sloop": { "model": "models/ships/sloop.fbx", "size": 6 },
-    "brigantine": { "model": "models/ships/brigantine.fbx", "size": 7 },
-    "galleon": { "model": "models/ships/galleon.fbx", "size": 8 },
-    "manowar": { "model": "models/ships/manowar.fbx", "size": 9 },
-    "enemy-patrol": { "model": "models/ships/enemy-patrol.fbx", "size": 6 },
-    "boss-blackthorn": { "model": "models/ships/boss-blackthorn.fbx", "size": 10 },
-    "boss-widow": { "model": "models/ships/boss-widow.fbx", "size": 10 },
-    "boss-crane": { "model": "models/ships/boss-crane.fbx", "size": 10 }
+    "sloop": { "model": "models/ships/sloop.glb", "size": 6 },
+    "brigantine": { "model": "models/ships/brigantine.glb", "size": 7 },
+    "galleon": { "model": "models/ships/galleon.glb", "size": 8 },
+    "manowar": { "model": "models/ships/manowar.glb", "size": 9 },
+    "enemy-patrol": { "model": "models/ships/enemy-patrol.glb", "size": 6 },
+    "boss-blackthorn": { "model": "models/ships/boss-blackthorn.glb", "size": 10 },
+    "boss-widow": { "model": "models/ships/boss-widow.glb", "size": 10 },
+    "boss-crane": { "model": "models/ships/boss-crane.glb", "size": 10 }
   },
   "textures": {
     "ships": "textures/ships.png",
@@ -122,7 +122,7 @@ The loader reads this manifest. If a model path is missing, it falls back to pro
 ## What Belongs in This Repo
 
 ✅ **Include:**
-- FBX/GLB model files used by the game
+- GLB model files used by the game
 - Texture atlases (PNG)
 - Composition JSON presets
 - Manifest file

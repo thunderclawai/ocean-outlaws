@@ -2,7 +2,7 @@
 import * as THREE from "three";
 import { isLand, collideWithTerrain, terrainBlocksLine } from "./terrain.js";
 import { getOverridePath, getOverrideSize } from "./artOverrides.js";
-import { loadFbxVisual } from "./fbxVisual.js";
+import { loadModel } from "./modelLoader.js";
 import { nextRandom } from "./rng.js";
 
 // --- faction definitions ---
@@ -202,7 +202,7 @@ function applyEnemyOverrideAsync(mesh) {
   if (!path) return;
   var fitSize = getOverrideSize("enemy_patrol") || 6;
   var turret = mesh.userData.turret || null;
-  loadFbxVisual(path, fitSize, true).then(function (visual) {
+  loadModel(path, fitSize, true).then(function (visual) {
     while (mesh.children.length) mesh.remove(mesh.children[0]);
     mesh.add(visual);
     placeEnemyTurretFromBounds(mesh, turret);
