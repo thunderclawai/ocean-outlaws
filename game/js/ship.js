@@ -79,7 +79,7 @@ function buildShipMesh() {
   return group;
 }
 
-// --- async FBX override: replace procedural mesh with Palmov model ---
+// --- async GLB override: replace procedural mesh with Palmov model ---
 function applyShipOverrideAsync(mesh, classKey) {
   var path = getOverridePath(classKey);
   if (!path) return;
@@ -116,7 +116,7 @@ export function createShip(classConfig) {
     mesh = buildShipMesh();
   }
 
-  // attempt to load FBX model override (async, falls back to procedural)
+  // attempt to load GLB model override (async, falls back to procedural)
   if (classConfig && classConfig.key) {
     applyShipOverrideAsync(mesh, classConfig.key);
   }
