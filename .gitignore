@@ -13,6 +13,14 @@ Thumbs.db
 
 # Node
 node_modules/
+dist/
+output/
+
+# Build output
+dist/
+
+# Worktrees
+.worktrees/
 
 # Editor
 *.swp

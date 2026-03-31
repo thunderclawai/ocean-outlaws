@@ -2,7 +2,7 @@
 import * as THREE from "three";
 import { isLand, collideWithTerrain, terrainBlocksLine, getTerrainAvoidance } from "./terrain.js";
 import { slideCollision, createStuckDetector, updateStuck, isStuck, nudgeToOpenWater } from "./collision.js";
-import { getOverridePath, getOverrideSize } from "./artOverrides.js";
+import { getOverridePath, getOverrideSize, ensureManifest } from "./artOverrides.js";
 import { loadGlbVisual } from "./glbVisual.js";
 import { ensureAssetRoles, pickRoleVariant } from "./assetRoles.js";
 import { nextRandom } from "./rng.js";
@@ -88,6 +88,11 @@ var FLOAT_OFFSET = 1.4;
 var BUOYANCY_LERP = 12;
 var TILT_LERP = 8;
 var TILT_DAMPING = 0.3;
+var ENEMY_BYPASS_MIN_DIST = 10;
+var ENEMY_BYPASS_MAX_DIST = 34;
+var ENEMY_BYPASS_STEP = 6;
+var ENEMY_BYPASS_REACH_RADIUS = 6.5;
+var ENEMY_BYPASS_REPLAN_COOLDOWN = 0.5;
 
 // spawn tuning
 var SPAWN_DIST_MIN = 80;
@@ -115,6 +120,9 @@ var enemyProjGeo = null;
 var enemyProjMat = null;
 var flashGeo = null;
 var flashMat = null;
+var particlePool = [];
+var PARTICLE_POOL_SIZE = PARTICLE_COUNT * 6; // support 6 simultaneous explosions
+var particlePoolCursor = 0;
 
 function ensureGeo() {
   if (particleGeo) return;
@@ -124,6 +132,55 @@ function ensureGeo() {
   enemyProjMat = new THREE.MeshBasicMaterial({ color: 0xff4422 });
   flashGeo = new THREE.SphereGeometry(0.3, 6, 4);
   flashMat = new THREE.MeshBasicMaterial({ color: 0xffee88, transparent: true, opacity: 0.9 });
+  for (var i = 0; i < PARTICLE_POOL_SIZE; i++) {
+    var pm = new THREE.Mesh(particleGeo, new THREE.MeshBasicMaterial({ color: 0xff6622, transparent: true, opacity: 1.0 }));
+    pm.visible = false;
+    particlePool.push(pm);
+  }
+}
+
+function collectFadeMaterials(obj) {
+  var out = [];
+  if (!obj) return out;
+  obj.traverse(function (child) {
+    if (!child.isMesh || !child.material) return;
+    if (Array.isArray(child.material)) {
+      for (var i = 0; i < child.material.length; i++) {
+        if (child.material[i]) out.push(child.material[i]);
+      }
+      return;
+    }
+    out.push(child.material);
+  });
+  return out;
+}
+
+function applySinkFade(enemy, alpha) {
+  if (!enemy) return;
+  if (!enemy._sinkFadeMaterials) {
+    enemy._sinkFadeMaterials = collectFadeMaterials(enemy.mesh);
+  }
+  var mats = enemy._sinkFadeMaterials;
+  for (var i = 0; i < mats.length; i++) {
+    var mat = mats[i];
+    if (!mat) continue;
+    mat.transparent = true;
+    mat.opacity = Math.max(0, alpha);
+  }
+}
+
+function acquireParticleMesh() {
+  var count = particlePool.length;
+  if (count === 0) return null;
+  for (var i = 0; i < count; i++) {
+    var idx = (particlePoolCursor + i) % count;
+    var candidate = particlePool[idx];
+    if (!candidate.visible) {
+      particlePoolCursor = (idx + 1) % count;
+      return candidate;
+    }
+  }
+  return null;
 }
 
 function spawnEnemyFlash(manager, scene, position) {
@@ -139,7 +196,7 @@ function buildEnemyPlaceholder() {
   var group = new THREE.Group();
   group.add(new THREE.Mesh(
     new THREE.BoxGeometry(1, 0.5, 2),
-    new THREE.MeshBasicMaterial({ color: 0xff00ff })
+    new THREE.MeshBasicMaterial({ color: 0x446688 })
   ));
   var portFP = new THREE.Object3D(); portFP.position.set(-0.5, 0.3, 0.3); group.add(portFP);
   var stbdFP = new THREE.Object3D(); stbdFP.position.set(0.5, 0.3, 0.3); group.add(stbdFP);
@@ -180,9 +237,13 @@ function pickFactionRoleVariant(rolePrefix, faction, fallbackPools, roleContext)
     var zoneId = normalizeRoleToken(roleContext.zoneId || roleContext.id);
     var condition = normalizeRoleToken(roleContext.condition);
     var difficulty = normalizeRoleToken(roleContext.difficulty);
+    var storyRegion = normalizeRoleToken(roleContext.storyRegion || roleContext.region);
+    var encounterType = normalizeRoleToken(roleContext.encounterType || roleContext.nodeType);
     if (zoneId) candidates.push(baseRole + ".zone." + zoneId);
     if (condition) candidates.push(baseRole + ".condition." + condition);
     if (difficulty) candidates.push(baseRole + ".difficulty." + difficulty);
+    if (storyRegion) candidates.push(baseRole + ".storyregion." + storyRegion);
+    if (encounterType) candidates.push(baseRole + ".encounter." + encounterType);
   }
   for (var i = 0; i < candidates.length; i++) {
     var roleKey = candidates[i];
@@ -204,33 +265,69 @@ function pickCombatModelVariant(faction, roleContext) {
   return pickFactionRoleVariant("enemy", key, ENEMY_MODEL_POOLS, roleContext);
 }
 
+function scheduleEnemyModelRetry(mesh, enemy) {
+  if (!enemy || enemy._modelLoaded || enemy._modelLoading || enemy._modelRetryTimer) return;
+  enemy._modelRetryTimer = setTimeout(function () {
+    enemy._modelRetryTimer = null;
+    if (!enemy.alive || !mesh) return;
+    applyEnemyOverrideAsync(mesh, enemy);
+  }, 1500);
+}
+
 function applyEnemyOverrideAsync(mesh, enemy) {
-  var spec = getEnemyOverrideSpec(enemy);
-  var path = spec.path;
-  if (!path) return;
-  var fitSize = spec.fit;
+  if (!mesh || !enemy) return;
+  if (enemy._modelLoaded || enemy._modelLoading) return;
+  enemy._modelLoading = true;
+
   var firePoints = mesh.userData.firePoints || [];
-  loadGlbVisual(path, fitSize, true, { noDecimate: spec.noDecimate }).then(function (visual) {
-    while (mesh.children.length) mesh.remove(mesh.children[0]);
-    mesh.add(visual);
-    // re-attach fire points so they move with the ship
-    for (var i = 0; i < firePoints.length; i++) {
-      mesh.add(firePoints[i]);
-    }
-    mesh.userData.firePoints = firePoints;
-    updateEnemyHitbox(enemy, visual);
-  }).catch(function () {
-    console.error("Failed to load enemy model: " + path);
+
+  function applyFallback() {
     while (mesh.children.length) mesh.remove(mesh.children[0]);
     mesh.add(new THREE.Mesh(
       new THREE.BoxGeometry(1, 0.5, 2),
-      new THREE.MeshBasicMaterial({ color: 0xff00ff })
+      new THREE.MeshBasicMaterial({ color: 0x446688 })
     ));
     for (var j = 0; j < firePoints.length; j++) {
       mesh.add(firePoints[j]);
     }
     mesh.userData.firePoints = firePoints;
     updateEnemyHitbox(enemy, mesh);
+  }
+
+  ensureManifest().then(function () {
+    var spec = getEnemyOverrideSpec(enemy);
+    var path = spec.path;
+    if (!path) {
+      console.error("Enemy model override missing for enemy_patrol");
+      enemy._modelLoading = false;
+      applyFallback();
+      scheduleEnemyModelRetry(mesh, enemy);
+      return;
+    }
+
+    var fitSize = spec.fit;
+    return loadGlbVisual(path, fitSize, true, { noDecimate: spec.noDecimate }).then(function (visual) {
+      while (mesh.children.length) mesh.remove(mesh.children[0]);
+      mesh.add(visual);
+      // re-attach fire points so they move with the ship
+      for (var i = 0; i < firePoints.length; i++) {
+        mesh.add(firePoints[i]);
+      }
+      mesh.userData.firePoints = firePoints;
+      updateEnemyHitbox(enemy, visual);
+      enemy._modelLoading = false;
+      enemy._modelLoaded = true;
+    }).catch(function () {
+      console.error("Failed to load enemy model: " + path);
+      enemy._modelLoading = false;
+      applyFallback();
+      scheduleEnemyModelRetry(mesh, enemy);
+    });
+  }).catch(function () {
+    console.error("Enemy model manifest failed to load");
+    enemy._modelLoading = false;
+    applyFallback();
+    scheduleEnemyModelRetry(mesh, enemy);
   });
 }
 
@@ -271,6 +368,59 @@ function normalizeAngle(a) {
   return a;
 }
 
+function scoreEnemyWaterHeading(terrain, fromX, fromZ, heading) {
+  var distances = [7, 11, 15];
+  var score = 0;
+  for (var i = 0; i < distances.length; i++) {
+    var d = distances[i];
+    var fx = fromX + Math.sin(heading) * d;
+    var fz = fromZ + Math.cos(heading) * d;
+    if (isLand(terrain, fx, fz)) {
+      score -= 5;
+      continue;
+    }
+    score += 2;
+    var side = 1.4 + d * 0.07;
+    var lx = fx + Math.sin(heading - Math.PI * 0.5) * side;
+    var lz = fz + Math.cos(heading - Math.PI * 0.5) * side;
+    var rx = fx + Math.sin(heading + Math.PI * 0.5) * side;
+    var rz = fz + Math.cos(heading + Math.PI * 0.5) * side;
+    score += isLand(terrain, lx, lz) ? -1.1 : 0.7;
+    score += isLand(terrain, rx, rz) ? -1.1 : 0.7;
+  }
+  return score;
+}
+
+function findEnemyBypassWaypoint(terrain, startX, startZ, targetX, targetZ, currentHeading) {
+  if (!terrain) return null;
+  var toTarget = Math.atan2(targetX - startX, targetZ - startZ);
+  var offsets = [0.35, -0.35, 0.65, -0.65, 0.95, -0.95, 1.25, -1.25, 1.55, -1.55];
+  var best = null;
+  var bestScore = -Infinity;
+
+  for (var dist = ENEMY_BYPASS_MIN_DIST; dist <= ENEMY_BYPASS_MAX_DIST; dist += ENEMY_BYPASS_STEP) {
+    for (var i = 0; i < offsets.length; i++) {
+      var heading = normalizeAngle(toTarget + offsets[i]);
+      var x = startX + Math.sin(heading) * dist;
+      var z = startZ + Math.cos(heading) * dist;
+      if (isLand(terrain, x, z)) continue;
+      if (terrainBlocksLine(terrain, startX, startZ, x, z)) continue;
+
+      var score = scoreEnemyWaterHeading(terrain, startX, startZ, heading);
+      if (terrainBlocksLine(terrain, x, z, targetX, targetZ)) score -= 7;
+      score -= Math.abs(offsets[i]) * 1.5;
+      score -= Math.abs(normalizeAngle(heading - currentHeading)) * 0.35;
+      score -= dist * 0.01;
+
+      if (score > bestScore) {
+        bestScore = score;
+        best = { x: x, z: z };
+      }
+    }
+  }
+  return best;
+}
+
 // --- create the enemy manager ---
 export function createEnemyManager() {
   ensureGeo();
@@ -295,6 +445,10 @@ export function createEnemyManager() {
 export function resetEnemyManager(manager, scene) {
   // remove all enemy meshes, projectiles, particles from scene
   for (var i = 0; i < manager.enemies.length; i++) {
+    if (manager.enemies[i]._modelRetryTimer) {
+      clearTimeout(manager.enemies[i]._modelRetryTimer);
+      manager.enemies[i]._modelRetryTimer = null;
+    }
     scene.remove(manager.enemies[i].mesh);
   }
   for (var i = 0; i < manager.projectiles.length; i++) {
@@ -302,6 +456,7 @@ export function resetEnemyManager(manager, scene) {
   }
   for (var i = 0; i < manager.particles.length; i++) {
     scene.remove(manager.particles[i].mesh);
+    manager.particles[i].mesh.visible = false;
   }
   for (var i = 0; i < (manager.effects || []).length; i++) {
     scene.remove(manager.effects[i].mesh);
@@ -333,7 +488,7 @@ export function setPlayerHp(manager, hp) {
 }
 
 // --- spawn a single enemy at map edge with wave multipliers ---
-function spawnEnemy(manager, playerX, playerZ, scene, waveConfig, terrain, roleContext) {
+export function spawnEnemy(manager, playerX, playerZ, scene, waveConfig, terrain, roleContext) {
   if (manager.enemies.length >= MAX_ENEMIES) return;
 
   var hpMult = waveConfig ? waveConfig.hpMult : 1;
@@ -383,7 +538,13 @@ function spawnEnemy(manager, playerX, playerZ, scene, waveConfig, terrain, roleC
     _smoothRoll: 0,
     _buoyancyInit: false,
     _stuckDetector: createStuckDetector(),
-    visualOverride: pickCombatModelVariant(faction, roleContext)
+    _landBypass: null,
+    _landPlanTimer: 0,
+    visualOverride: pickCombatModelVariant(faction, roleContext),
+    _modelLoading: false,
+    _modelLoaded: false,
+    _modelRetryTimer: null,
+    _sinkFadeMaterials: null
   };
 
   updateEnemyHitbox(enemy, mesh);
@@ -424,7 +585,13 @@ export function spawnAmbientEnemy(manager, x, z, heading, faction, speed, scene,
     _smoothRoll: 0,
     _buoyancyInit: false,
     _stuckDetector: createStuckDetector(),
+    _landBypass: null,
+    _landPlanTimer: 0,
     visualOverride: ambientVisual,
+    _modelLoading: false,
+    _modelLoaded: false,
+    _modelRetryTimer: null,
+    _sinkFadeMaterials: null,
     ambient: true,
     attacked: false,
     tradeRoute: tradeRoute || null
@@ -476,12 +643,7 @@ export function updateEnemies(manager, ship, dt, scene, getWaveHeight, elapsed, 
       e.mesh.position.y -= SINK_SPEED * dt;
       e.mesh.rotation.z += dt * 0.5;
       var sinkAlpha = 1 - e.sinkTimer / SINK_DURATION;
-      e.mesh.traverse(function (child) {
-        if (child.isMesh && child.material) {
-          child.material.transparent = true;
-          child.material.opacity = Math.max(0, sinkAlpha);
-        }
-      });
+      applySinkFade(e, sinkAlpha);
       if (e.sinkTimer >= SINK_DURATION) {
         scene.remove(e.mesh);
         continue;
@@ -505,22 +667,30 @@ export function updateEnemies(manager, ship, dt, scene, getWaveHeight, elapsed, 
     var steerAngle = targetAngle;
     var ePrevX = e.posX;
     var ePrevZ = e.posZ;
+    var goalX = null;
+    var goalZ = null;
 
     if (e.faction === "merchant") {
       if (e.ambient && !e.attacked && e.tradeRoute) {
         // Ambient trade route AI: sail toward endpoint
         steerAngle = Math.atan2(e.tradeRoute.endX - e.posX, e.tradeRoute.endZ - e.posZ);
         moveSpeed = e.speed;
+        goalX = e.tradeRoute.endX;
+        goalZ = e.tradeRoute.endZ;
       } else {
         // Flee AI: no panic burst, speed already below player max
         steerAngle = fleeAngle;
         moveSpeed = e.fleeSpeed || e.speed;
+        goalX = e.posX + Math.sin(fleeAngle) * 28;
+        goalZ = e.posZ + Math.cos(fleeAngle) * 28;
       }
     } else if (e.faction === "navy") {
       if (e.ambient && !e.attacked && e.tradeRoute) {
         // Convoy escort following trade route
         steerAngle = Math.atan2(e.tradeRoute.endX - e.posX, e.tradeRoute.endZ - e.posZ);
         moveSpeed = e.speed;
+        goalX = e.tradeRoute.endX;
+        goalZ = e.tradeRoute.endZ;
       } else {
         // Navy AI: hold formation at engagement range, broadside fire
         if (dist < eEngageDist) {
@@ -528,16 +698,50 @@ export function updateEnemies(manager, ship, dt, scene, getWaveHeight, elapsed, 
           steerAngle = normalizeAngle(targetAngle + Math.PI * 0.5);
           moveSpeed = e.speed * 0.6;
         }
+        goalX = ship.posX;
+        goalZ = ship.posZ;
       }
     } else {
       // Pirate AI: aggressive rush, close distance fast
       if (dist < eEngageDist) {
         moveSpeed = e.speed * Math.max(0.3, dist / eEngageDist);
       }
+      goalX = ship.posX;
+      goalZ = ship.posZ;
     }
 
     // terrain avoidance — steer away from nearby obstacles
     if (terrain) {
+      e._landPlanTimer = Math.max(0, (e._landPlanTimer || 0) - dt);
+      if (e._landBypass) {
+        var bdx0 = e._landBypass.x - e.posX;
+        var bdz0 = e._landBypass.z - e.posZ;
+        var bdist0 = Math.sqrt(bdx0 * bdx0 + bdz0 * bdz0);
+        if (bdist0 < ENEMY_BYPASS_REACH_RADIUS || isLand(terrain, e._landBypass.x, e._landBypass.z)) {
+          e._landBypass = null;
+        } else if (goalX !== null && goalZ !== null && e._landPlanTimer <= 0 && !terrainBlocksLine(terrain, e.posX, e.posZ, goalX, goalZ)) {
+          e._landBypass = null;
+        }
+      }
+
+      if (!e._landBypass && goalX !== null && goalZ !== null && e._landPlanTimer <= 0 && terrainBlocksLine(terrain, e.posX, e.posZ, goalX, goalZ)) {
+        var bypass = findEnemyBypassWaypoint(terrain, e.posX, e.posZ, goalX, goalZ, e.heading);
+        if (bypass) e._landBypass = bypass;
+        e._landPlanTimer = ENEMY_BYPASS_REPLAN_COOLDOWN + nextRandom() * 0.25;
+      }
+
+      if (e._landBypass) {
+        var bdx = e._landBypass.x - e.posX;
+        var bdz = e._landBypass.z - e.posZ;
+        var bdist = Math.sqrt(bdx * bdx + bdz * bdz);
+        if (bdist < ENEMY_BYPASS_REACH_RADIUS) {
+          e._landBypass = null;
+        } else {
+          steerAngle = Math.atan2(bdx, bdz);
+          moveSpeed *= 0.92;
+        }
+      }
+
       var avoidRange = e.faction === "merchant" ? 25 : 18;
       var avoid = getTerrainAvoidance(terrain, e.posX, e.posZ, avoidRange);
       if (avoid.factor > 0.1) {
@@ -569,9 +773,16 @@ export function updateEnemies(manager, ship, dt, scene, getWaveHeight, elapsed, 
       e.heading += Math.sign(angleDiff) * maxTurn;
     }
 
+    // Apply slow debuff from Anchor Chain perk
+    if (e.slowTimer && e.slowTimer > 0) {
+      e.slowTimer -= dt;
+      if (e.slowTimer < 0) e.slowTimer = 0;
+    }
+    var effectiveSpeed = moveSpeed * (e.slowTimer > 0 ? (e.slowMult || 1) : 1);
+
     if (Math.abs(angleDiff) < Math.PI * 0.6) {
-      e.posX += Math.sin(e.heading) * moveSpeed * dt;
-      e.posZ += Math.cos(e.heading) * moveSpeed * dt;
+      e.posX += Math.sin(e.heading) * effectiveSpeed * dt;
+      e.posZ += Math.cos(e.heading) * effectiveSpeed * dt;
     }
 
     if (terrain) {
@@ -807,10 +1018,21 @@ function updateEnemyEffects(manager, dt, scene) {
 // --- spawn explosion particles ---
 function spawnExplosion(manager, x, y, z, scene) {
   ensureGeo();
-  for (var i = 0; i < PARTICLE_COUNT; i++) {
-    var mesh = new THREE.Mesh(particleGeo, particleMat.clone());
+  var activeParticles = manager.particles.length;
+  var intensity = 1.0;
+  if (activeParticles > PARTICLE_POOL_SIZE * 0.75) intensity = 0.35;
+  else if (activeParticles > PARTICLE_POOL_SIZE * 0.5) intensity = 0.55;
+  else if (activeParticles > PARTICLE_POOL_SIZE * 0.25) intensity = 0.75;
+
+  var spawnCount = Math.max(4, Math.round(PARTICLE_COUNT * intensity));
+  for (var i = 0; i < spawnCount; i++) {
+    var mesh = acquireParticleMesh();
+    if (!mesh) break;
     mesh.position.set(x, y + 0.5, z);
-    scene.add(mesh);
+    mesh.material.opacity = 1.0;
+    mesh.scale.setScalar(0.5);
+    mesh.visible = true;
+    if (!mesh.parent) scene.add(mesh);
 
     var angle = nextRandom() * Math.PI * 2;
     var upSpeed = 3 + nextRandom() * 5;
@@ -833,7 +1055,7 @@ function updateParticles(manager, dt, scene) {
     var p = manager.particles[i];
     p.life -= dt;
     if (p.life <= 0) {
-      scene.remove(p.mesh);
+      p.mesh.visible = false; // return to pool — no dispose
       continue;
     }
     p.vy -= 9.8 * dt;
@@ -849,10 +1071,14 @@ function updateParticles(manager, dt, scene) {
 
 // --- called when an enemy is hit by player projectile ---
 // damageMult: multiplier from upgrades (optional, defaults to 1)
-export function damageEnemy(manager, enemy, scene, damageMult) {
+export function damageEnemy(manager, enemy, scene, damageMult, slowHit) {
   var dmg = Math.round(1 * (damageMult || 1));
   if (dmg < 1) dmg = 1;
   enemy.hp -= dmg;
+  if (slowHit) {
+    enemy.slowTimer = 3.0;
+    enemy.slowMult = 0.5;
+  }
   // mark ambient enemies as attacked (triggers flee/combat AI)
   if (enemy.ambient && !enemy.attacked) {
     enemy.attacked = true;
@@ -872,6 +1098,7 @@ export function damageEnemy(manager, enemy, scene, damageMult) {
     enemy.alive = false;
     enemy.sinking = true;
     enemy.sinkTimer = 0;
+    enemy._sinkFadeMaterials = collectFadeMaterials(enemy.mesh);
     spawnExplosion(manager, enemy.posX, enemy.mesh.position.y, enemy.posZ, scene);
     if (manager.onDeathCallback) {
       manager.onDeathCallback(enemy.posX, enemy.mesh.position.y, enemy.posZ, enemy.faction);

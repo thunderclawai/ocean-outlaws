@@ -1,34 +1,129 @@
-// terrain.js — Palmov composition terrain, collision queries, map boundaries
+// terrain.js — infinite chunked terrain streaming, collision queries, and GC
 import * as THREE from "three";
 import { nextRandom } from "./rng.js";
-import { addCompositeFieldVisual, addTieredIslandFieldVisual, pointInVisualLand, resolveVisualCollision, getTerrainAvoidance as _getTerrainAvoidance, createColliderDebugOverlay, removeColliderDebugOverlay } from "./terrainComposite.js";
+import { isMobile } from "./mobile.js";
+import {
+  addCompositeFieldVisual,
+  addTieredIslandFieldVisual,
+  createColliderDebugOverlay as createCompositeColliderDebugOverlay,
+  removeColliderDebugOverlay as removeCompositeColliderDebugOverlay,
+  initIslandInstancing,
+  disposeIslandInstancing,
+  removeChunkInstances,
+  shiftAllInstancePositions,
+  flushInstanceUpdates,
+  preloadTerrainModels
+} from "./terrainComposite.js";
+export { preloadTerrainModels };
 
-// --- tuning ---
-var MAP_SIZE = 400;           // world units, matches ocean plane
-var GRID_RES = 128;           // heightmap resolution (NxN)
-var SEA_LEVEL = 0.0;          // threshold: above = land, below = water
-var NOISE_SCALE = 0.02;       // noise frequency tuned for island-sized features
-var OCTAVES = 4;
+// --- world/chunk tuning ---
+var CHUNK_SIZE = 400;                  // keeps compatibility with existing map-scale content
+var GRID_RES_DESKTOP = 64;
+var GRID_RES_MOBILE = 64;             // halved on mobile — 6.25 unit resolution is adequate
+var SEA_LEVEL = 0.0;
+var NOISE_SCALE = 0.02;
+var OCTAVES = 3;
 var PERSISTENCE = 0.5;
 var LACUNARITY = 2.0;
-var SPAWN_CLEAR_RADIUS = 40;  // keep center clear for player spawn
-var COLLISION_RADIUS = 1.5;   // ship collision sampling radius
+var SPAWN_CLEAR_RADIUS = 40;
+var COLLISION_RADIUS = 1.5;
 var VISUAL_COLLIDER_PAD = 0.35;
 
-// --- map boundary ---
-var EDGE_FOG_START = 160;     // distance from center where fog begins
-var EDGE_PUSH_START = 180;    // distance from center where push-back begins
-var EDGE_HARD_LIMIT = 200;    // absolute boundary (MAP_SIZE / 2)
+// fog-based visibility culling threshold (~600² — chunks beyond fully fogged)
+var FOG_CULL_DIST_SQ = 360000;
 
-// --- simplex-style 2D noise (value noise with smooth interpolation) ---
-// Seeded pseudo-random hash
-var _seed = 0;
+function getGridRes() {
+  return isMobile() ? GRID_RES_MOBILE : GRID_RES_DESKTOP;
+}
+
+// --- object pools (Phase 4) ---
+var _groupPool = [];
+var _heightmapPool = [];
+var GROUP_POOL_MAX = 24;
+var HEIGHTMAP_POOL_MAX = 16;
+
+function acquireGroup() {
+  if (_groupPool.length > 0) {
+    var g = _groupPool.pop();
+    g.visible = true;
+    return g;
+  }
+  return new THREE.Group();
+}
+
+function releaseGroup(group) {
+  if (!group) return;
+  while (group.children.length > 0) group.remove(group.children[0]);
+  group.position.set(0, 0, 0);
+  group.rotation.set(0, 0, 0);
+  group.scale.set(1, 1, 1);
+  group.visible = false;
+  if (_groupPool.length < GROUP_POOL_MAX) _groupPool.push(group);
+}
+
+function acquireHeightmapArray(length) {
+  for (var i = _heightmapPool.length - 1; i >= 0; i--) {
+    if (_heightmapPool[i].length === length) {
+      var arr = _heightmapPool.splice(i, 1)[0];
+      arr.fill(0);
+      return arr;
+    }
+  }
+  return new Float32Array(length);
+}
+
+function releaseHeightmapArray(arr) {
+  if (!arr || _heightmapPool.length >= HEIGHTMAP_POOL_MAX) return;
+  _heightmapPool.push(arr);
+}
+
+// world-stream tuning (persisted and user-configurable)
+var STREAM_SETTINGS_KEY = "oo_world_stream_settings";
+var STREAM_SETTINGS_BOUNDS = Object.freeze({
+  streamRadius: { min: 1, max: 4 },
+  keepRadius: { min: 1, max: 6 },
+  preloadAhead: { min: 0, max: 5 },
+  chunkCreateBudget: { min: 1, max: 24 },
+  activeChunkSoftLimit: { min: 8, max: 80 },
+  activeChunkHardLimit: { min: 12, max: 96 }
+});
+var DEFAULT_STREAM_SETTINGS = Object.freeze({
+  streamRadius: 1,
+  keepRadius: 2,
+  preloadAhead: 1,
+  chunkCreateBudget: 1,
+  activeChunkSoftLimit: 20,
+  activeChunkHardLimit: 30
+});
+var MOBILE_STREAM_SETTINGS = Object.freeze({
+  streamRadius: 1,
+  keepRadius: 1,
+  preloadAhead: 0,
+  chunkCreateBudget: 1,
+  activeChunkSoftLimit: 9,
+  activeChunkHardLimit: 12
+});
+var _streamSettings = null;
+var _streamSettingsSubscribers = [];
+
+// disposal budget per frame (resources disposed incrementally)
+var GC_RESOURCE_BUDGET = 40;
+
+// difficulty / loot scaling with distance from spawn
+var DISTANCE_RAMP_MAX = 6000;
+var ENEMY_SCALE_MAX_ADD = 1.35;
+var LOOT_SCALE_MAX_ADD = 1.2;
+var MIN_COMPOSITION_CHANCE = 0.38;
+var COMPOSITION_RARITY_MAX_DROP = 0.52;
+
+// --- value-noise helpers (seeded by world seed for deterministic infinite sampling) ---
+var _noiseSeed = 0;
 
 function hashCoord(ix, iy) {
-  var n = ix * 374761393 + iy * 668265263 + _seed;
-  n = (n ^ (n >> 13)) * 1274126177;
-  n = n ^ (n >> 16);
-  return (n & 0x7fffffff) / 0x7fffffff;  // 0..1
+  var n = Math.imul(ix, 374761393) ^ Math.imul(iy, 668265263) ^ (_noiseSeed | 0);
+  n = Math.imul(n ^ (n >>> 13), 1274126177);
+  n = n ^ (n >>> 16);
+  return (n >>> 0) / 4294967295;
 }
 
 function smoothstep(t) {
@@ -64,13 +159,144 @@ function fbm(x, y) {
     amplitude *= PERSISTENCE;
     frequency *= LACUNARITY;
   }
-  return value / maxAmp;  // normalized 0..1
+  return value / maxAmp;
 }
 
-// --- Gaussian blur for smoother, more organic island shapes ---
+function clamp(v, lo, hi) {
+  return Math.max(lo, Math.min(hi, v));
+}
+
+// --- directional biome blending for open world ---
+// 4 cardinal biomes: North=Archipelago, East=Open Seas, South=Reef Clusters, West=Rocky Crags
+function getBiomeBlend(wx, wz) {
+  var dist = Math.sqrt(wx * wx + wz * wz);
+  var t = clamp((dist - 400) / 2000, 0, 1);
+  if (t === 0) return { noiseScale: NOISE_SCALE, landThreshold: 0.73 };
+  var angle = Math.atan2(wx, -wz); // -π to π, 0=north
+  var north = Math.max(0, Math.cos(angle));
+  var east  = Math.max(0, Math.cos(angle - Math.PI * 0.5));
+  var south = Math.max(0, Math.cos(angle - Math.PI));
+  var west  = Math.max(0, Math.cos(angle + Math.PI * 0.5));
+  var total = north + east + south + west;
+  var ns = (north * 0.030 + east * 0.016 + south * 0.040 + west * 0.012) / total;
+  var lt = (north * 0.67  + east * 0.78  + south * 0.64  + west * 0.71)  / total;
+  return {
+    noiseScale:     NOISE_SCALE + (ns - NOISE_SCALE) * t,
+    landThreshold:  0.73 + (lt - 0.73) * t
+  };
+}
+
+function getBiomeNoiseScale(wx, wz) { return getBiomeBlend(wx, wz).noiseScale; }
+function getBiomeLandThreshold(wx, wz) { return getBiomeBlend(wx, wz).landThreshold; }
+
+function cloneStreamSettings(src) {
+  return {
+    streamRadius: src.streamRadius,
+    keepRadius: src.keepRadius,
+    preloadAhead: src.preloadAhead,
+    chunkCreateBudget: src.chunkCreateBudget,
+    activeChunkSoftLimit: src.activeChunkSoftLimit,
+    activeChunkHardLimit: src.activeChunkHardLimit
+  };
+}
+
+function clampSettingInt(value, fallback, bounds) {
+  var n = Number(value);
+  if (!isFinite(n)) n = fallback;
+  return Math.max(bounds.min, Math.min(bounds.max, Math.round(n)));
+}
+
+function normalizeStreamSettings(input, fallback) {
+  var base = cloneStreamSettings(fallback || DEFAULT_STREAM_SETTINGS);
+  if (input && typeof input === "object") {
+    base.streamRadius = clampSettingInt(input.streamRadius, base.streamRadius, STREAM_SETTINGS_BOUNDS.streamRadius);
+    base.keepRadius = clampSettingInt(input.keepRadius, base.keepRadius, STREAM_SETTINGS_BOUNDS.keepRadius);
+    base.preloadAhead = clampSettingInt(input.preloadAhead, base.preloadAhead, STREAM_SETTINGS_BOUNDS.preloadAhead);
+    base.chunkCreateBudget = clampSettingInt(input.chunkCreateBudget, base.chunkCreateBudget, STREAM_SETTINGS_BOUNDS.chunkCreateBudget);
+    base.activeChunkSoftLimit = clampSettingInt(input.activeChunkSoftLimit, base.activeChunkSoftLimit, STREAM_SETTINGS_BOUNDS.activeChunkSoftLimit);
+    base.activeChunkHardLimit = clampSettingInt(input.activeChunkHardLimit, base.activeChunkHardLimit, STREAM_SETTINGS_BOUNDS.activeChunkHardLimit);
+  }
+
+  base.keepRadius = Math.max(base.keepRadius, base.streamRadius);
+  var minHardLimit = Math.max(STREAM_SETTINGS_BOUNDS.activeChunkHardLimit.min, base.activeChunkSoftLimit + 2);
+  base.activeChunkHardLimit = Math.max(minHardLimit, base.activeChunkHardLimit);
+  if (base.activeChunkHardLimit > STREAM_SETTINGS_BOUNDS.activeChunkHardLimit.max) {
+    base.activeChunkHardLimit = STREAM_SETTINGS_BOUNDS.activeChunkHardLimit.max;
+    base.activeChunkSoftLimit = Math.min(base.activeChunkSoftLimit, base.activeChunkHardLimit - 2);
+  }
+
+  return base;
+}
+
+function ensureStreamSettingsReady() {
+  if (_streamSettings) return;
+  var loaded = null;
+  if (typeof localStorage !== "undefined") {
+    try {
+      var raw = localStorage.getItem(STREAM_SETTINGS_KEY);
+      if (raw) loaded = JSON.parse(raw);
+    } catch (e) {
+      loaded = null;
+    }
+  }
+  var defaults = isMobile() ? MOBILE_STREAM_SETTINGS : DEFAULT_STREAM_SETTINGS;
+  _streamSettings = normalizeStreamSettings(loaded, defaults);
+}
+
+function getActiveStreamSettings() {
+  ensureStreamSettingsReady();
+  return _streamSettings;
+}
+
+function getEffectiveStreamSettings(terrain) {
+  var base = cloneStreamSettings(getActiveStreamSettings());
+  if (!terrain || !terrain.runtimePressure || !terrain.runtimePressure.active) return base;
+  base.preloadAhead = 0;
+  base.chunkCreateBudget = Math.max(1, Math.min(base.chunkCreateBudget, 1));
+  return base;
+}
+
+function persistStreamSettings() {
+  if (typeof localStorage === "undefined") return;
+  try {
+    localStorage.setItem(STREAM_SETTINGS_KEY, JSON.stringify(_streamSettings));
+  } catch (e) { /* ignore */ }
+}
+
+function notifyStreamSettingsChanged() {
+  var snapshot = cloneStreamSettings(_streamSettings);
+  for (var i = 0; i < _streamSettingsSubscribers.length; i++) {
+    _streamSettingsSubscribers[i](snapshot);
+  }
+}
+
+function chunkKey(cx, cy) {
+  return cx + "," + cy;
+}
+
+function toChunkCoord(globalCoord) {
+  // chunk coordinate where chunk center is at coord * CHUNK_SIZE
+  return Math.floor((globalCoord + CHUNK_SIZE * 0.5) / CHUNK_SIZE);
+}
+
+function chunkCenter(coord) {
+  return coord * CHUNK_SIZE;
+}
+
+function hashInt3(a, b, c) {
+  var h = (a | 0) ^ Math.imul(b | 0, 0x85ebca6b) ^ Math.imul(c | 0, 0xc2b2ae35);
+  h = Math.imul(h ^ (h >>> 16), 0x7feb352d);
+  h = Math.imul(h ^ (h >>> 15), 0x846ca68b);
+  h = h ^ (h >>> 16);
+  return h >>> 0;
+}
+
+function seedToUnit(seed) {
+  return ((seed >>> 0) % 1000000) / 1000000;
+}
+
 function gaussianBlur(data, size, passes) {
   var tmp = new Float32Array(data.length);
-  // 3x3 Gaussian kernel weights (sigma ~0.85)
   var k0 = 4 / 16, k1 = 2 / 16, k2 = 1 / 16;
   for (var p = 0; p < passes; p++) {
     for (var y = 0; y < size; y++) {
@@ -79,113 +305,87 @@ function gaussianBlur(data, size, passes) {
         var y0 = Math.max(0, y - 1), y1 = Math.min(size - 1, y + 1);
         tmp[y * size + x] =
           data[y * size + x] * k0 +
-          (data[y * size + x0] + data[y * size + x1] +
-           data[y0 * size + x] + data[y1 * size + x]) * k1 +
-          (data[y0 * size + x0] + data[y0 * size + x1] +
-           data[y1 * size + x0] + data[y1 * size + x1]) * k2;
+          (data[y * size + x0] + data[y * size + x1] + data[y0 * size + x] + data[y1 * size + x]) * k1 +
+          (data[y0 * size + x0] + data[y0 * size + x1] + data[y1 * size + x0] + data[y1 * size + x1]) * k2;
       }
     }
     for (var i = 0; i < data.length; i++) data[i] = tmp[i];
   }
 }
 
-// --- generate heightmap ---
-function generateHeightmap(seed, difficulty) {
-  _seed = seed;
-  var size = GRID_RES + 1;  // +1 for vertex grid
-  var data = new Float32Array(size * size);
-  var half = MAP_SIZE / 2;
+function distanceMetrics(globalX, globalZ) {
+  var dist = Math.sqrt(globalX * globalX + globalZ * globalZ);
+  var t = clamp(dist / DISTANCE_RAMP_MAX, 0, 1);
+  return {
+    distance: dist,
+    t: t,
+    enemyMult: 1 + t * ENEMY_SCALE_MAX_ADD,
+    lootMult: 1 + t * LOOT_SCALE_MAX_ADD,
+    compositionChance: Math.max(MIN_COMPOSITION_CHANCE, 1 - t * COMPOSITION_RARITY_MAX_DROP)
+  };
+}
 
-  // scale noise coverage based on difficulty (more land at higher difficulty)
-  // ~95% ocean at easy (diff 1), ~90% ocean at hard (diff 6); archipelago feel
-  var landThreshold = Math.max(0.70, 0.76 - difficulty * 0.01);  // higher = less land
+function generateChunkHeightmap(worldSeed, difficulty, cx, cy, terrainConfig) {
+  _noiseSeed = worldSeed | 0;
+  var gridRes = getGridRes();
+  var size = gridRes + 1;
+  var data = acquireHeightmapArray(size * size);
+  var half = CHUNK_SIZE * 0.5;
+  var centerX = chunkCenter(cx);
+  var centerZ = chunkCenter(cy);
+
+  // distance-scaled land threshold: farther chunks trend slightly rougher
+  var centerMetrics = distanceMetrics(centerX, centerZ);
+  var farLandBias = centerMetrics.t * 0.02;
+
+  var cfg = terrainConfig || {};
+  var noiseScale = cfg.biomeMode === "directional"
+    ? getBiomeNoiseScale(cx * CHUNK_SIZE, cy * CHUNK_SIZE)
+    : (cfg.noiseScale || NOISE_SCALE);
+  var landThreshold = cfg.biomeMode === "directional"
+    ? getBiomeLandThreshold(cx * CHUNK_SIZE, cy * CHUNK_SIZE)
+    : Math.max(0.63, cfg.landThreshold != null
+        ? cfg.landThreshold - farLandBias
+        : 0.76 - difficulty * 0.01 - farLandBias);
 
   for (var iy = 0; iy < size; iy++) {
     for (var ix = 0; ix < size; ix++) {
-      var worldX = (ix / GRID_RES) * MAP_SIZE - half;
-      var worldZ = (iy / GRID_RES) * MAP_SIZE - half;
+      var worldX = centerX + (ix / gridRes) * CHUNK_SIZE - half;
+      var worldZ = centerZ + (iy / gridRes) * CHUNK_SIZE - half;
 
-      // base noise
-      var n = fbm(worldX * NOISE_SCALE, worldZ * NOISE_SCALE);
+      var n = fbm(worldX * noiseScale, worldZ * noiseScale);
+      var h = (n - landThreshold) * 2;
 
-      // remap: shift so threshold is at sea level
-      var h = (n - landThreshold) * 2;  // -1..1 range roughly
-
-      // no border — open ocean fading to horizon
-
-      // clear center area for player spawn
-      var distFromCenter = Math.sqrt(worldX * worldX + worldZ * worldZ);
-      if (distFromCenter < SPAWN_CLEAR_RADIUS) {
-        var clearFactor = 1 - distFromCenter / SPAWN_CLEAR_RADIUS;
+      // keep the global origin clear for spawn only
+      var originDist = Math.sqrt(worldX * worldX + worldZ * worldZ);
+      if (originDist < SPAWN_CLEAR_RADIUS) {
+        var clearFactor = 1 - originDist / SPAWN_CLEAR_RADIUS;
         clearFactor = clearFactor * clearFactor;
-        h = h - clearFactor * 3;  // push below sea level
+        h -= clearFactor * 3;
       }
 
       data[iy * size + ix] = h;
     }
   }
 
-  // smooth heightmap for rounder, more natural island profiles
-  gaussianBlur(data, size, 2);
-
+  gaussianBlur(data, size, 1);
   return { data: data, size: size };
 }
 
-// --- flood fill to ensure all water is navigable ---
-function ensureNavigable(heightmap) {
-  var size = heightmap.size;
-  var data = heightmap.data;
-  // find the center cell (guaranteed water)
-  var cx = Math.floor(size / 2);
-  var cy = Math.floor(size / 2);
+function sampleChunkHeight(chunk, globalX, globalZ) {
+  if (!chunk || !chunk.heightmap) return -1;
+  var size = chunk.heightmap.size;
+  var data = chunk.heightmap.data;
+  var half = CHUNK_SIZE * 0.5;
+  var minX = chunkCenter(chunk.cx) - half;
+  var minZ = chunkCenter(chunk.cy) - half;
 
-  // BFS from center to mark all reachable water
-  var visited = new Uint8Array(size * size);
-  var queue = [cx + cy * size];
-  visited[cx + cy * size] = 1;
+  var res = size - 1; // derive from actual heightmap (supports variable resolution)
+  var u = (globalX - minX) / CHUNK_SIZE * res;
+  var v = (globalZ - minZ) / CHUNK_SIZE * res;
 
-  while (queue.length > 0) {
-    var idx = queue.shift();
-    var y = Math.floor(idx / size);
-    var x = idx - y * size;
-    var neighbors = [
-      [x - 1, y], [x + 1, y], [x, y - 1], [x, y + 1]
-    ];
-    for (var i = 0; i < neighbors.length; i++) {
-      var nx = neighbors[i][0];
-      var ny = neighbors[i][1];
-      if (nx < 0 || nx >= size || ny < 0 || ny >= size) continue;
-      var ni = ny * size + nx;
-      if (visited[ni]) continue;
-      if (data[ni] <= SEA_LEVEL) {
-        visited[ni] = 1;
-        queue.push(ni);
-      }
-    }
-  }
-
-  // any water cell NOT visited is a landlocked pocket — fill with land
-  // (alternatively, lower unreachable land to make it water, but filling is simpler)
-  for (var i = 0; i < data.length; i++) {
-    if (data[i] <= SEA_LEVEL && !visited[i]) {
-      // this water pocket is unreachable — raise it to land
-      data[i] = 0.3;
-    }
-  }
-}
-
-// --- query heightmap at world position ---
-function sampleHeight(terrain, worldX, worldZ) {
-  var half = MAP_SIZE / 2;
-  var u = (worldX + half) / MAP_SIZE * GRID_RES;
-  var v = (worldZ + half) / MAP_SIZE * GRID_RES;
-  var size = terrain.heightmap.size;
-  var data = terrain.heightmap.data;
-
-  var ix = Math.floor(u);
-  var iy = Math.floor(v);
-  ix = Math.max(0, Math.min(size - 2, ix));
-  iy = Math.max(0, Math.min(size - 2, iy));
+  var ix = clamp(Math.floor(u), 0, size - 2);
+  var iy = clamp(Math.floor(v), 0, size - 2);
   var fx = u - ix;
   var fy = v - iy;
 
@@ -199,125 +399,911 @@ function sampleHeight(terrain, worldX, worldZ) {
   return hx0 + (hx1 - hx0) * fy;
 }
 
-// --- heightmap-specific queries for port placement (used during async load window) ---
-export function sampleHeightmap(terrain, worldX, worldZ) {
-  if (!terrain || !terrain.heightmap) return -1;
-  return sampleHeight(terrain, worldX, worldZ);
-}
-
-export function isHeightmapLand(terrain, worldX, worldZ) {
-  if (!terrain || !terrain.heightmap) return false;
-  return sampleHeight(terrain, worldX, worldZ) > SEA_LEVEL;
-}
-
-// --- public: check if a world position is on land ---
-export function isLand(terrain, worldX, worldZ) {
-  if (!terrain) return false;
-  if (terrain.useVisualCollision) return pointInVisualLand(terrain, worldX, worldZ, COLLISION_RADIUS);
-  return false;
-}
-
-// --- public: get terrain height at world position ---
-export function getTerrainHeight(terrain, worldX, worldZ) {
-  if (!terrain) return -1;
-  if (terrain.useVisualCollision) return pointInVisualLand(terrain, worldX, worldZ, COLLISION_RADIUS) ? 1 : -1;
-  return -1;
-}
-
-// --- public: collide a moving entity with terrain ---
-// Returns { collided, newX, newZ, normalX, normalZ } — pushes entity out of land
-export function collideWithTerrain(terrain, posX, posZ, prevX, prevZ) {
-  if (!terrain) return { collided: false, newX: posX, newZ: posZ, normalX: 0, normalZ: 0 };
-  if (terrain.useVisualCollision) {
-    var vcol = resolveVisualCollision(terrain, posX, posZ, prevX, prevZ);
-    if (vcol) return vcol;
+function gatherMaterialTextures(material, outSet) {
+  if (!material) return;
+  for (var k in material) {
+    if (!Object.prototype.hasOwnProperty.call(material, k)) continue;
+    var v = material[k];
+    if (v && v.isTexture) outSet.add(v);
   }
-  return { collided: false, newX: posX, newZ: posZ, normalX: 0, normalZ: 0 };
 }
 
-// --- public: check line-of-sight between two points ---
-// Returns true if terrain blocks the line
-export function terrainBlocksLine(terrain, x1, z1, x2, z2) {
-  if (!terrain) return false;
-  if (terrain.useVisualCollision) {
-    var vdx = x2 - x1;
-    var vdz = z2 - z1;
-    var vdist = Math.sqrt(vdx * vdx + vdz * vdz);
-    var vsteps = Math.ceil(vdist / 2.0);
-    if (vsteps < 2) vsteps = 2;
-    for (var vi = 1; vi < vsteps; vi++) {
-      var vt = vi / vsteps;
-      var vx = x1 + vdx * vt;
-      var vz = z1 + vdz * vt;
-      if (pointInVisualLand(terrain, vx, vz, VISUAL_COLLIDER_PAD)) return true;
+function collectChunkResources(group) {
+  var geometrySet = new Set();
+  var materialSet = new Set();
+  var textureSet = new Set();
+
+  if (!group) return { geometries: [], materials: [], textures: [] };
+
+  group.traverse(function (o) {
+    if (o.geometry) geometrySet.add(o.geometry);
+    if (!o.material) return;
+    if (Array.isArray(o.material)) {
+      for (var i = 0; i < o.material.length; i++) {
+        var m = o.material[i];
+        if (!m) continue;
+        materialSet.add(m);
+        gatherMaterialTextures(m, textureSet);
+      }
+    } else {
+      materialSet.add(o.material);
+      gatherMaterialTextures(o.material, textureSet);
     }
+  });
+
+  return {
+    geometries: Array.from(geometrySet),
+    materials: Array.from(materialSet),
+    textures: Array.from(textureSet)
+  };
+}
+
+function isSharedTemplateResource(resource) {
+  return !!(resource && resource.userData && resource.userData.__glbSharedTemplate);
+}
+
+function retainResource(refMap, resource) {
+  if (!resource || !resource.uuid) return;
+  if (isSharedTemplateResource(resource)) return;
+  var entry = refMap.get(resource.uuid);
+  if (entry) {
+    entry.count++;
+  } else {
+    refMap.set(resource.uuid, { resource: resource, count: 1 });
+  }
+}
+
+function releaseResource(refMap, resource) {
+  if (!resource || !resource.uuid) return false;
+  if (isSharedTemplateResource(resource)) return false;
+  var entry = refMap.get(resource.uuid);
+  if (!entry) return true;
+  entry.count--;
+  if (entry.count <= 0) {
+    refMap.delete(resource.uuid);
+    return true;
   }
   return false;
 }
 
-// --- public: create terrain for a zone ---
-export function createTerrain(seed, difficulty) {
-  var heightmap = generateHeightmap(seed, difficulty);
-  ensureNavigable(heightmap);
+function retainChunkResources(terrain, chunk) {
+  if (!chunk || chunk.resourcesTracked) return;
+  if (!chunk.resources) chunk.resources = collectChunkResources(chunk.group);
 
-  var mesh = new THREE.Group();
+  var i;
+  for (i = 0; i < chunk.resources.geometries.length; i++) {
+    retainResource(terrain.resourceRefs.geometry, chunk.resources.geometries[i]);
+  }
+  for (i = 0; i < chunk.resources.materials.length; i++) {
+    retainResource(terrain.resourceRefs.material, chunk.resources.materials[i]);
+  }
+  for (i = 0; i < chunk.resources.textures.length; i++) {
+    retainResource(terrain.resourceRefs.texture, chunk.resources.textures[i]);
+  }
 
-  var terrain = {
-    mesh: mesh,
-    heightmap: heightmap,
-    seed: seed,
-    difficulty: difficulty,
+  chunk.resourcesTracked = true;
+}
+
+function buildChunkGcEntries(chunk) {
+  var entries = [];
+  if (!chunk || !chunk.resources) return entries;
+  var i;
+  for (i = 0; i < chunk.resources.geometries.length; i++) {
+    entries.push({ type: "geometry", resource: chunk.resources.geometries[i] });
+  }
+  for (i = 0; i < chunk.resources.materials.length; i++) {
+    entries.push({ type: "material", resource: chunk.resources.materials[i] });
+  }
+  for (i = 0; i < chunk.resources.textures.length; i++) {
+    entries.push({ type: "texture", resource: chunk.resources.textures[i] });
+  }
+  return entries;
+}
+
+function disposeGcEntry(terrain, entry) {
+  if (!entry || !entry.resource) return;
+  var refMap = terrain.resourceRefs[entry.type];
+  var shouldDispose = releaseResource(refMap, entry.resource);
+  if (shouldDispose && entry.resource.dispose) {
+    entry.resource.dispose();
+    terrain.debug.disposedResources++;
+  }
+}
+
+function setChunkLocalPosition(terrain, chunk) {
+  if (!terrain || !chunk || !chunk.group) return;
+  var globalX = chunkCenter(chunk.cx);
+  var globalZ = chunkCenter(chunk.cy);
+  chunk.group.position.set(globalX - terrain.originOffsetX, 0, globalZ - terrain.originOffsetZ);
+}
+
+function collectTerrainColliders(terrain) {
+  var colliders = [];
+  terrain.chunks.forEach(function (chunk) {
+    if (chunk.state !== "active" || !chunk.useVisualCollision || !chunk.visualColliders) return;
+    for (var i = 0; i < chunk.visualColliders.length; i++) colliders.push(chunk.visualColliders[i]);
+  });
+  return colliders;
+}
+
+function getChunkAtGlobal(terrain, globalX, globalZ) {
+  var cx = toChunkCoord(globalX);
+  var cy = toChunkCoord(globalZ);
+  return terrain.chunks.get(chunkKey(cx, cy)) || null;
+}
+
+function ensureChunk(terrain, cx, cy) {
+  var key = chunkKey(cx, cy);
+  var existing = terrain.chunks.get(key);
+  if (existing) return existing;
+
+  var group = acquireGroup();
+  var worldSeed = terrain.worldSeed | 0;
+  var chunkSeed = hashInt3(worldSeed, cx, cy);
+  var centerX = chunkCenter(cx);
+  var centerZ = chunkCenter(cy);
+  var metrics = distanceMetrics(centerX, centerZ);
+
+  var chunk = {
+    key: key,
+    cx: cx,
+    cy: cy,
+    group: group,
+    seed: chunkSeed,
+    worldSeed: worldSeed,
+    metrics: metrics,
+    heightmap: generateChunkHeightmap(worldSeed, terrain.difficulty, cx, cy, terrain.terrainConfig),
     visualMode: "composite-field",
     compositePlacedCount: 0,
     compositeInstanceCount: 0,
     placedModelCount: 0,
     visualColliders: [],
+    minimapMarkers: [],
     useVisualCollision: false,
-    minimapMarkers: []
+    resources: null,
+    resourcesTracked: false,
+    gcEntries: null,
+    gcPrepared: false,
+    ready: false,
+    state: "loading"
   };
 
-  addCompositeFieldVisual(mesh, terrain, seed + difficulty * 101).then(function (res) {
-    terrain.compositePlacedCount = res ? (res.itemsPlaced || 0) : 0;
-    terrain.compositeInstanceCount = res ? (res.instancesPlaced || 0) : 0;
-    terrain.placedModelCount = terrain.compositePlacedCount;
+  setChunkLocalPosition(terrain, chunk);
+  terrain.mesh.add(group);
+  terrain.chunks.set(key, chunk);
+  terrain.debug.chunksCreated++;
 
-    if (terrain.placedModelCount <= 0) {
-      terrain.visualMode = "composite-fallback-tiered";
-      addTieredIslandFieldVisual(mesh, terrain, heightmap, seed).then(function (placed) {
-        terrain.placedModelCount = placed;
-        terrain.useVisualCollision = placed > 0;
-      });
-      return;
+  var compositeChance = metrics.compositionChance;
+  var roll = seedToUnit(hashInt3(chunkSeed, 0x63d83595, 0x7f4a7c15));
+  var shouldGenerateVisuals = roll <= compositeChance;
+
+  function finalizeChunk() {
+    if (chunk.ready) return;
+    chunk.ready = true;
+    chunk.useVisualCollision = !!(chunk.visualColliders && chunk.visualColliders.length > 0);
+    retainChunkResources(terrain, chunk);
+
+    if (chunk.state === "queued") {
+      prepareChunkForGc(terrain, chunk);
+    } else {
+      chunk.state = "active";
+      if (terrain.onChunkReady) terrain.onChunkReady(chunk);
     }
-    terrain.useVisualCollision = true;
+  }
+
+  if (!shouldGenerateVisuals) {
+    chunk.visualMode = "sparse-open-water";
+    chunk.useVisualCollision = false;
+    finalizeChunk();
+    return chunk;
+  }
+
+  chunk._visualPromise = addCompositeFieldVisual(group, chunk, chunkSeed + terrain.difficulty * 101)
+    .then(function (res) {
+      chunk.compositePlacedCount = res ? (res.itemsPlaced || 0) : 0;
+      chunk.compositeInstanceCount = res ? (res.instancesPlaced || 0) : 0;
+      chunk.placedModelCount = chunk.compositePlacedCount;
+
+      if (chunk.placedModelCount <= 0) {
+        chunk.visualMode = "composite-fallback-tiered";
+        return addTieredIslandFieldVisual(group, chunk, chunk.heightmap, chunkSeed).then(function (placed) {
+          chunk.placedModelCount = placed || 0;
+        });
+      }
+      return null;
+    })
+    .catch(function () {
+      // Keep this chunk navigable even if visual generation fails.
+      chunk.visualMode = "composite-failed-open-water";
+    })
+    .finally(function () {
+      finalizeChunk();
+      chunk._visualPromise = null;
+    });
+
+  return chunk;
+}
+
+function prepareChunkForGc(terrain, chunk) {
+  if (!chunk || chunk.gcPrepared || chunk.state === "disposed") return;
+  if (terrain.onChunkDispose) terrain.onChunkDispose(chunk);
+  removeChunkInstances(chunk.key);
+  if (!chunk.resourcesTracked) retainChunkResources(terrain, chunk);
+
+  chunk.gcEntries = buildChunkGcEntries(chunk);
+  chunk.gcPrepared = true;
+  chunk.state = "queued";
+
+  if (chunk.group && chunk.group.parent) {
+    chunk.group.parent.remove(chunk.group);
+  }
+  // Stop participating in collision/minimap immediately.
+  chunk.useVisualCollision = false;
+  chunk.visualColliders = [];
+  chunk.minimapMarkers = [];
+
+  terrain.gcQueue.push(chunk);
+}
+
+function enqueueChunkForGc(terrain, chunk) {
+  if (!chunk || chunk.state === "queued" || chunk.state === "disposed") return;
+  chunk.state = "queued";
+  if (chunk.ready) {
+    prepareChunkForGc(terrain, chunk);
+  }
+}
+
+function finalizeChunkDisposal(terrain, chunk) {
+  if (!chunk || chunk.state === "disposed") return;
+
+  terrain.chunks.delete(chunk.key);
+  chunk.state = "disposed";
+  releaseGroup(chunk.group);
+  chunk.group = null;
+  if (chunk.heightmap) {
+    releaseHeightmapArray(chunk.heightmap.data);
+    chunk.heightmap = null;
+  }
+  chunk.resources = null;
+  chunk.gcEntries = null;
+  chunk.visualColliders = null;
+  chunk.minimapMarkers = null;
+
+  terrain.debug.chunksDestroyed++;
+}
+
+function processGcQueue(terrain) {
+  var budget = terrain.gcResourceBudget;
+
+  while (budget > 0 && terrain.gcQueue.length > 0) {
+    var chunk = terrain.gcQueue[0];
+    if (!chunk || !chunk.gcEntries) {
+      terrain.gcQueue.shift();
+      if (chunk) finalizeChunkDisposal(terrain, chunk);
+      continue;
+    }
+
+    if (chunk.gcEntries.length === 0) {
+      terrain.gcQueue.shift();
+      finalizeChunkDisposal(terrain, chunk);
+      continue;
+    }
+
+    var entry = chunk.gcEntries.pop();
+    disposeGcEntry(terrain, entry);
+    budget--;
+  }
+}
+
+function gatherChunksAroundGlobal(terrain, globalX, globalZ, range) {
+  var cx = toChunkCoord(globalX);
+  var cy = toChunkCoord(globalZ);
+  var rad = Math.max(1, Math.ceil((range || CHUNK_SIZE * 0.5) / CHUNK_SIZE) + 1);
+  var chunks = [];
+
+  for (var x = cx - rad; x <= cx + rad; x++) {
+    for (var y = cy - rad; y <= cy + rad; y++) {
+      var ch = terrain.chunks.get(chunkKey(x, y));
+      if (!ch || ch.state !== "active" || !ch.useVisualCollision || !ch.visualColliders || ch.visualColliders.length === 0) continue;
+      chunks.push(ch);
+    }
+  }
+  return chunks;
+}
+
+function pointInColliders(chunks, x, z, pad) {
+  var p = pad || 0;
+  for (var ci = 0; ci < chunks.length; ci++) {
+    var colliders = chunks[ci].visualColliders;
+    for (var i = 0; i < colliders.length; i++) {
+      var c = colliders[i];
+      if (x >= c.minX - p && x <= c.maxX + p && z >= c.minZ - p && z <= c.maxZ + p) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+function resolveCollisionFromColliders(chunks, posX, posZ) {
+  var pad = COLLISION_RADIUS + VISUAL_COLLIDER_PAD;
+  var nx = posX;
+  var nz = posZ;
+  var collided = false;
+  var lastNX = 0;
+  var lastNZ = 0;
+
+  for (var it = 0; it < 4; it++) {
+    var any = false;
+    for (var ci = 0; ci < chunks.length; ci++) {
+      var colliders = chunks[ci].visualColliders;
+      for (var i = 0; i < colliders.length; i++) {
+        var c = colliders[i];
+        var minX = c.minX - pad;
+        var maxX = c.maxX + pad;
+        var minZ = c.minZ - pad;
+        var maxZ = c.maxZ + pad;
+        if (nx < minX || nx > maxX || nz < minZ || nz > maxZ) continue;
+
+        any = true;
+        collided = true;
+
+        var leftDist = Math.abs(nx - minX);
+        var rightDist = Math.abs(maxX - nx);
+        var downDist = Math.abs(nz - minZ);
+        var upDist = Math.abs(maxZ - nz);
+        var minDist = Math.min(leftDist, rightDist, downDist, upDist);
+
+        if (minDist === leftDist) { nx = minX - 0.02; lastNX = -1; lastNZ = 0; }
+        else if (minDist === rightDist) { nx = maxX + 0.02; lastNX = 1; lastNZ = 0; }
+        else if (minDist === downDist) { nz = minZ - 0.02; lastNX = 0; lastNZ = -1; }
+        else { nz = maxZ + 0.02; lastNX = 0; lastNZ = 1; }
+      }
+    }
+    if (!any) break;
+  }
+
+  if (!collided) return null;
+  return { collided: true, newX: nx, newZ: nz, normalX: lastNX, normalZ: lastNZ };
+}
+
+function computeAvoidanceFromChunks(chunks, worldX, worldZ, range) {
+  var out = { factor: 0, awayX: 0, awayZ: 0, distance: Infinity };
+  if (!chunks || chunks.length === 0) return out;
+
+  var avoidRange = range || 14;
+  var bestDist = Infinity;
+  var bestDx = 0;
+  var bestDz = 0;
+
+  for (var ci = 0; ci < chunks.length; ci++) {
+    var colliders = chunks[ci].visualColliders;
+    for (var i = 0; i < colliders.length; i++) {
+      var c = colliders[i];
+      var nx = clamp(worldX, c.minX, c.maxX);
+      var nz = clamp(worldZ, c.minZ, c.maxZ);
+      var dx = worldX - nx;
+      var dz = worldZ - nz;
+      var inside = (worldX >= c.minX && worldX <= c.maxX && worldZ >= c.minZ && worldZ <= c.maxZ);
+      var d = Math.sqrt(dx * dx + dz * dz);
+
+      if (inside) {
+        var ccx = (c.minX + c.maxX) * 0.5;
+        var ccz = (c.minZ + c.maxZ) * 0.5;
+        dx = worldX - ccx;
+        dz = worldZ - ccz;
+        d = 0;
+      }
+
+      if (d < bestDist) {
+        bestDist = d;
+        bestDx = dx;
+        bestDz = dz;
+      }
+    }
+  }
+
+  if (!isFinite(bestDist) || bestDist >= avoidRange) return out;
+
+  var len = Math.sqrt(bestDx * bestDx + bestDz * bestDz);
+  if (len < 0.0001) {
+    bestDx = 0;
+    bestDz = -1;
+    len = 1;
+  }
+
+  out.awayX = bestDx / len;
+  out.awayZ = bestDz / len;
+  var t = 1 - bestDist / avoidRange;
+  out.factor = clamp(t * t, 0, 1);
+  out.distance = bestDist;
+  return out;
+}
+
+function addDesiredCandidate(desired, candidates, centerX, centerY, cx, cy, dirX, dirY) {
+  var key = chunkKey(cx, cy);
+  if (desired.has(key)) return;
+  desired.add(key);
+
+  var dx = cx - centerX;
+  var dy = cy - centerY;
+  var ring = Math.max(Math.abs(dx), Math.abs(dy));
+  var d2 = dx * dx + dy * dy;
+  var forward = dx * dirX + dy * dirY;
+
+  candidates.push({
+    key: key,
+    cx: cx,
+    cy: cy,
+    ring: ring,
+    d2: d2,
+    forward: forward
   });
+}
+
+function buildDesiredChunkSet(terrain, globalX, globalZ, heading, streamSettings) {
+  var desired = new Set();
+  var candidates = [];
+  var cx = toChunkCoord(globalX);
+  var cy = toChunkCoord(globalZ);
+  var dirX = Math.sin(heading || 0);
+  var dirY = Math.cos(heading || 0);
+
+  // Base active bubble around player.
+  for (var dx = -streamSettings.streamRadius; dx <= streamSettings.streamRadius; dx++) {
+    for (var dy = -streamSettings.streamRadius; dy <= streamSettings.streamRadius; dy++) {
+      addDesiredCandidate(desired, candidates, cx, cy, cx + dx, cy + dy, dirX, dirY);
+    }
+  }
+
+  // Preload a forward corridor to hide pop-in while sailing.
+  for (var step = 1; step <= streamSettings.preloadAhead; step++) {
+    var ax = cx + Math.round(dirX * step);
+    var ay = cy + Math.round(dirY * step);
+    for (var sx = -1; sx <= 1; sx++) {
+      for (var sy = -1; sy <= 1; sy++) {
+        addDesiredCandidate(desired, candidates, cx, cy, ax + sx, ay + sy, dirX, dirY);
+      }
+    }
+  }
+
+  // Always prioritize current tile, then rings moving outward.
+  candidates.sort(function (a, b) {
+    if (a.ring !== b.ring) return a.ring - b.ring;
+    if (a.d2 !== b.d2) return a.d2 - b.d2;
+    if (a.forward !== b.forward) return b.forward - a.forward;
+    if (a.cx !== b.cx) return a.cx - b.cx;
+    return a.cy - b.cy;
+  });
+
+  return { desired: desired, candidates: candidates, centerX: cx, centerY: cy };
+}
+
+function createDesiredChunks(terrain, candidates, streamSettings) {
+  if (!terrain.chunkCreateQueue) terrain.chunkCreateQueue = [];
+  if (!terrain.chunkCreateQueued) terrain.chunkCreateQueued = new Set();
+  for (var i = 0; i < candidates.length; i++) {
+    var c = candidates[i];
+    if (terrain.chunks.has(c.key)) continue;
+    if (terrain.chunkCreateQueued.has(c.key)) continue;
+    terrain.chunkCreateQueued.add(c.key);
+    terrain.chunkCreateQueue.push({
+      key: c.key,
+      cx: c.cx,
+      cy: c.cy
+    });
+  }
+}
+
+function processChunkBuildQueue(terrain, desiredSet, streamSettings, maxBuildPerPass) {
+  if (!terrain || !terrain.chunkCreateQueue || terrain.chunkCreateQueue.length === 0) return 0;
+  var created = 0;
+  var budget = Math.max(1, Math.min(streamSettings.chunkCreateBudget, maxBuildPerPass || 1));
+  while (terrain.chunkCreateQueue.length > 0 && created < budget) {
+    var next = terrain.chunkCreateQueue.shift();
+    if (!next) continue;
+    if (terrain.chunkCreateQueued) terrain.chunkCreateQueued.delete(next.key);
+    if (terrain.chunks.has(next.key)) continue;
+    if (desiredSet && !desiredSet.has(next.key)) continue;
+    ensureChunk(terrain, next.cx, next.cy);
+    created++;
+  }
+  return created;
+}
+
+function forceGcIfNeeded(terrain, centerX, centerY, desiredSet, streamSettings) {
+  if (terrain.chunks.size <= streamSettings.activeChunkHardLimit) return;
+
+  var candidates = [];
+  terrain.chunks.forEach(function (chunk) {
+    if (!chunk || chunk.state !== "active") return;
+    if (desiredSet.has(chunk.key)) return;
+    var dx = chunk.cx - centerX;
+    var dy = chunk.cy - centerY;
+    candidates.push({ chunk: chunk, d2: dx * dx + dy * dy });
+  });
+
+  candidates.sort(function (a, b) { return b.d2 - a.d2; });
+
+  var idx = 0;
+  while (terrain.chunks.size - terrain.gcQueue.length > streamSettings.activeChunkSoftLimit && idx < candidates.length) {
+    enqueueChunkForGc(terrain, candidates[idx].chunk);
+    terrain.debug.forcedGcCount++;
+    idx++;
+  }
+}
+
+export function getTerrainStreamSettingBounds() {
+  return {
+    streamRadius: { min: STREAM_SETTINGS_BOUNDS.streamRadius.min, max: STREAM_SETTINGS_BOUNDS.streamRadius.max },
+    keepRadius: { min: STREAM_SETTINGS_BOUNDS.keepRadius.min, max: STREAM_SETTINGS_BOUNDS.keepRadius.max },
+    preloadAhead: { min: STREAM_SETTINGS_BOUNDS.preloadAhead.min, max: STREAM_SETTINGS_BOUNDS.preloadAhead.max },
+    chunkCreateBudget: { min: STREAM_SETTINGS_BOUNDS.chunkCreateBudget.min, max: STREAM_SETTINGS_BOUNDS.chunkCreateBudget.max },
+    activeChunkSoftLimit: { min: STREAM_SETTINGS_BOUNDS.activeChunkSoftLimit.min, max: STREAM_SETTINGS_BOUNDS.activeChunkSoftLimit.max },
+    activeChunkHardLimit: { min: STREAM_SETTINGS_BOUNDS.activeChunkHardLimit.min, max: STREAM_SETTINGS_BOUNDS.activeChunkHardLimit.max }
+  };
+}
+
+export function getTerrainStreamSettings() {
+  return cloneStreamSettings(getActiveStreamSettings());
+}
+
+export function updateTerrainStreamSettings(patch) {
+  var prev = cloneStreamSettings(getActiveStreamSettings());
+  var merged = cloneStreamSettings(prev);
+  if (patch && typeof patch === "object") {
+    for (var k in patch) {
+      if (!Object.prototype.hasOwnProperty.call(patch, k)) continue;
+      merged[k] = patch[k];
+    }
+  }
+
+  _streamSettings = normalizeStreamSettings(merged, prev);
+  persistStreamSettings();
+  notifyStreamSettingsChanged();
+  return cloneStreamSettings(_streamSettings);
+}
+
+export function resetTerrainStreamSettings() {
+  _streamSettings = normalizeStreamSettings(DEFAULT_STREAM_SETTINGS, DEFAULT_STREAM_SETTINGS);
+  persistStreamSettings();
+  notifyStreamSettingsChanged();
+  return cloneStreamSettings(_streamSettings);
+}
+
+export function onTerrainStreamSettingsChange(cb) {
+  if (typeof cb !== "function") {
+    return function () {};
+  }
+  _streamSettingsSubscribers.push(cb);
+  return function () {
+    var idx = _streamSettingsSubscribers.indexOf(cb);
+    if (idx >= 0) _streamSettingsSubscribers.splice(idx, 1);
+  };
+}
+
+export function createTerrain(seed, difficulty, terrainConfig) {
+  var mesh = new THREE.Group();
+
+  var terrain = {
+    mesh: mesh,
+    seed: seed,
+    worldSeed: seed | 0,
+    difficulty: difficulty,
+    terrainConfig: terrainConfig || {},
+    chunks: new Map(),
+    gcQueue: [],
+    chunkCreateQueue: [],
+    chunkCreateQueued: new Set(),
+    gcResourceBudget: GC_RESOURCE_BUDGET,
+    originOffsetX: 0,
+    originOffsetZ: 0,
+    runtimePressure: { active: false },
+    onChunkReady: null,    // callback(chunk) — fires when chunk becomes active
+    onChunkDispose: null,  // callback(chunk) — fires before chunk GC
+    onOriginShift: null,   // callback(shiftX, shiftZ) — fires on origin shift
+    resourceRefs: {
+      geometry: new Map(),
+      material: new Map(),
+      texture: new Map()
+    },
+    debug: {
+      chunksCreated: 0,
+      chunksDestroyed: 0,
+      disposedResources: 0,
+      forcedGcCount: 0,
+      desiredChunkCount: 0,
+      createdThisFrame: 0,
+      chunkBuildQueue: 0,
+      streamPassCount: 0,
+      visualPassCount: 0
+    },
+    getDensityAt: function (worldX, worldZ) {
+      var globalX = worldX + terrain.originOffsetX;
+      var globalZ = worldZ + terrain.originOffsetZ;
+      return distanceMetrics(globalX, globalZ);
+    },
+    getDebugState: function () {
+      return {
+        seed: terrain.worldSeed,
+        activeChunks: terrain.chunks.size,
+        queuedGc: terrain.gcQueue.length,
+        created: terrain.debug.chunksCreated,
+        destroyed: terrain.debug.chunksDestroyed,
+        disposedResources: terrain.debug.disposedResources,
+        forcedGc: terrain.debug.forcedGcCount,
+        desiredChunkCount: terrain.debug.desiredChunkCount,
+        createdThisFrame: terrain.debug.createdThisFrame,
+        chunkBuildQueue: terrain.debug.chunkBuildQueue,
+        streamPassCount: terrain.debug.streamPassCount,
+        visualPassCount: terrain.debug.visualPassCount,
+        runtimePressureActive: !!(terrain.runtimePressure && terrain.runtimePressure.active),
+        chunkSize: CHUNK_SIZE,
+        streamSettings: cloneStreamSettings(getActiveStreamSettings()),
+        originOffsetX: terrain.originOffsetX,
+        originOffsetZ: terrain.originOffsetZ
+      };
+    }
+  };
+
+  initIslandInstancing(mesh);
+
+  // bootstrap around spawn so first frame has content
+  updateTerrainStreaming(terrain, 0, 0, 0, 0);
+  updateTerrainStreaming(terrain, 0, 0, 0, 0);
+
+  // collect visual promises from bootstrap chunks so callers can wait for initial load
+  var _initPromises = [];
+  terrain.chunks.forEach(function (chunk) {
+    if (chunk._visualPromise) _initPromises.push(chunk._visualPromise);
+  });
+  terrain.initialChunkCount = _initPromises.length;
+  terrain.initialReady = _initPromises.length > 0 ? Promise.all(_initPromises) : Promise.resolve();
 
   return terrain;
 }
 
-// --- public: remove terrain from scene ---
-export function removeTerrain(terrain, scene) {
-  if (!terrain || !terrain.mesh) return;
-  scene.remove(terrain.mesh);
-  terrain.mesh.traverse(function (o) {
-    if (o.geometry) o.geometry.dispose();
-    if (!o.material) return;
-    if (Array.isArray(o.material)) {
-      for (var i = 0; i < o.material.length; i++) if (o.material[i] && o.material[i].dispose) o.material[i].dispose();
-    } else if (o.material.dispose) {
-      o.material.dispose();
+export function updateTerrainStreaming(terrain, playerX, playerZ, playerHeading) {
+  updateTerrainStreamingWithOptions(terrain, playerX, playerZ, playerHeading, null);
+}
+
+function applyChunkVisibility(terrain) {
+  if (!terrain || !terrain.chunks) return;
+  terrain.chunks.forEach(function (chunk) {
+    if (!chunk || !chunk.group || chunk.state !== "active") return;
+    var sceneX = chunkCenter(chunk.cx) - terrain.originOffsetX;
+    var sceneZ = chunkCenter(chunk.cy) - terrain.originOffsetZ;
+    chunk.group.visible = (sceneX * sceneX + sceneZ * sceneZ) < FOG_CULL_DIST_SQ;
+  });
+  terrain.debug.visualPassCount++;
+}
+
+function updateTerrainStreamingWithOptions(terrain, playerX, playerZ, playerHeading, options) {
+  if (!terrain) return;
+  var opts = options || {};
+  var shouldDoHeavyPass = opts.heavy !== false;
+  var shouldUpdateVisuals = opts.visuals !== false;
+  var maxBuildPerPass = Number.isFinite(opts.maxBuildPerPass) ? Math.max(1, Math.floor(opts.maxBuildPerPass)) : 1;
+
+  if (shouldDoHeavyPass) {
+    var streamSettings = getEffectiveStreamSettings(terrain);
+    var globalX = playerX + terrain.originOffsetX;
+    var globalZ = playerZ + terrain.originOffsetZ;
+
+    var desiredInfo = buildDesiredChunkSet(terrain, globalX, globalZ, playerHeading || 0, streamSettings);
+    var desiredSet = desiredInfo.desired;
+
+    terrain.debug.desiredChunkCount = desiredInfo.candidates.length;
+    createDesiredChunks(terrain, desiredInfo.candidates, streamSettings);
+    terrain.debug.createdThisFrame = processChunkBuildQueue(terrain, desiredSet, streamSettings, maxBuildPerPass);
+    terrain.debug.chunkBuildQueue = terrain.chunkCreateQueue ? terrain.chunkCreateQueue.length : 0;
+
+    terrain.chunks.forEach(function (chunk) {
+      if (!chunk || chunk.state === "queued" || chunk.state === "disposed") return;
+
+      var dx = Math.abs(chunk.cx - desiredInfo.centerX);
+      var dy = Math.abs(chunk.cy - desiredInfo.centerY);
+      var keep = desiredSet.has(chunk.key) || (dx <= streamSettings.keepRadius && dy <= streamSettings.keepRadius);
+      if (!keep) {
+        enqueueChunkForGc(terrain, chunk);
+      }
+    });
+
+    forceGcIfNeeded(terrain, desiredInfo.centerX, desiredInfo.centerY, desiredSet, streamSettings);
+    processGcQueue(terrain);
+    terrain.debug.streamPassCount++;
+  }
+
+  if (shouldUpdateVisuals) {
+    applyChunkVisibility(terrain);
+    flushInstanceUpdates();
+  }
+}
+
+export function updateTerrainVisuals(terrain) {
+  if (!terrain) return;
+  updateTerrainStreamingWithOptions(terrain, 0, 0, 0, { heavy: false, visuals: true });
+}
+
+export function updateTerrainStreamingScheduled(terrain, playerX, playerZ, playerHeading, maxBuildPerPass) {
+  updateTerrainStreamingWithOptions(terrain, playerX, playerZ, playerHeading, {
+    heavy: true,
+    visuals: false,
+    maxBuildPerPass: maxBuildPerPass
+  });
+}
+
+export function setTerrainRuntimePressure(terrain, active) {
+  if (!terrain) return;
+  if (!terrain.runtimePressure) terrain.runtimePressure = { active: false };
+  terrain.runtimePressure.active = !!active;
+}
+
+export function getTerrainPlayerChunk(terrain, playerX, playerZ) {
+  if (!terrain) return { cx: 0, cy: 0 };
+  var globalX = playerX + terrain.originOffsetX;
+  var globalZ = playerZ + terrain.originOffsetZ;
+  return {
+    cx: toChunkCoord(globalX),
+    cy: toChunkCoord(globalZ)
+  };
+}
+
+export function shiftTerrainOrigin(terrain, shiftX, shiftZ) {
+  if (!terrain || (!shiftX && !shiftZ)) return;
+
+  terrain.originOffsetX += shiftX;
+  terrain.originOffsetZ += shiftZ;
+
+  if (terrain.onOriginShift) terrain.onOriginShift(shiftX, shiftZ);
+  shiftAllInstancePositions(shiftX, shiftZ);
+
+  terrain.chunks.forEach(function (chunk) {
+    if (!chunk || chunk.state === "disposed") return;
+    if (chunk.group) {
+      chunk.group.position.x -= shiftX;
+      chunk.group.position.z -= shiftZ;
+    }
+
+    if (chunk.visualColliders) {
+      for (var i = 0; i < chunk.visualColliders.length; i++) {
+        var c = chunk.visualColliders[i];
+        c.minX -= shiftX;
+        c.maxX -= shiftX;
+        c.minZ -= shiftZ;
+        c.maxZ -= shiftZ;
+      }
+    }
+
+    if (chunk.minimapMarkers) {
+      for (var m = 0; m < chunk.minimapMarkers.length; m++) {
+        chunk.minimapMarkers[m].x -= shiftX;
+        chunk.minimapMarkers[m].z -= shiftZ;
+      }
     }
   });
 }
 
-// --- public: find a valid (water) spawn position near a point ---
+// --- heightmap queries (used for port placement and coastline checks) ---
+export function sampleHeightmap(terrain, worldX, worldZ) {
+  if (!terrain) return -1;
+
+  var globalX = worldX + terrain.originOffsetX;
+  var globalZ = worldZ + terrain.originOffsetZ;
+  var cx = toChunkCoord(globalX);
+  var cy = toChunkCoord(globalZ);
+  var chunk = ensureChunk(terrain, cx, cy);
+  if (!chunk || !chunk.heightmap) return -1;
+
+  return sampleChunkHeight(chunk, globalX, globalZ);
+}
+
+export function isHeightmapLand(terrain, worldX, worldZ) {
+  if (!terrain) return false;
+  return sampleHeightmap(terrain, worldX, worldZ) > SEA_LEVEL;
+}
+
+// --- collision / LOS queries ---
+export function isLand(terrain, worldX, worldZ) {
+  if (!terrain) return false;
+
+  var globalX = worldX + terrain.originOffsetX;
+  var globalZ = worldZ + terrain.originOffsetZ;
+  ensureChunk(terrain, toChunkCoord(globalX), toChunkCoord(globalZ));
+
+  var chunks = gatherChunksAroundGlobal(terrain, globalX, globalZ, COLLISION_RADIUS + 2);
+  return pointInColliders(chunks, worldX, worldZ, COLLISION_RADIUS);
+}
+
+export function getTerrainHeight(terrain, worldX, worldZ) {
+  if (!terrain) return -1;
+  return isLand(terrain, worldX, worldZ) ? 1 : -1;
+}
+
+export function collideWithTerrain(terrain, posX, posZ, prevX, prevZ) {
+  if (!terrain) {
+    return { collided: false, newX: posX, newZ: posZ, normalX: 0, normalZ: 0 };
+  }
+
+  var globalX = posX + terrain.originOffsetX;
+  var globalZ = posZ + terrain.originOffsetZ;
+  ensureChunk(terrain, toChunkCoord(globalX), toChunkCoord(globalZ));
+
+  var chunks = gatherChunksAroundGlobal(terrain, globalX, globalZ, 6);
+  var col = resolveCollisionFromColliders(chunks, posX, posZ);
+  if (col) return col;
+
+  return { collided: false, newX: posX, newZ: posZ, normalX: 0, normalZ: 0 };
+}
+
+export function terrainBlocksLine(terrain, x1, z1, x2, z2) {
+  if (!terrain) return false;
+
+  var midX = (x1 + x2) * 0.5 + terrain.originOffsetX;
+  var midZ = (z1 + z2) * 0.5 + terrain.originOffsetZ;
+  var dist = Math.sqrt((x2 - x1) * (x2 - x1) + (z2 - z1) * (z2 - z1));
+  var chunks = gatherChunksAroundGlobal(terrain, midX, midZ, dist * 0.5 + 8);
+
+  var steps = Math.max(2, Math.ceil(dist / 2));
+  for (var i = 1; i < steps; i++) {
+    var t = i / steps;
+    var sx = x1 + (x2 - x1) * t;
+    var sz = z1 + (z2 - z1) * t;
+    if (pointInColliders(chunks, sx, sz, VISUAL_COLLIDER_PAD)) return true;
+  }
+  return false;
+}
+
+export function getTerrainAvoidance(terrain, worldX, worldZ, range) {
+  if (!terrain) return { factor: 0, awayX: 0, awayZ: 0, distance: Infinity };
+
+  var globalX = worldX + terrain.originOffsetX;
+  var globalZ = worldZ + terrain.originOffsetZ;
+  var r = range || 14;
+  var chunks = gatherChunksAroundGlobal(terrain, globalX, globalZ, r + 4);
+  return computeAvoidanceFromChunks(chunks, worldX, worldZ, r);
+}
+
+// --- disposal ---
+export function removeTerrain(terrain, scene) {
+  if (!terrain || !terrain.mesh) return;
+  disposeIslandInstancing();
+  scene.remove(terrain.mesh);
+
+  // Dispose everything eagerly on full teardown.
+  terrain.chunks.forEach(function (chunk) {
+    if (!chunk) return;
+    if (!chunk.resources) chunk.resources = collectChunkResources(chunk.group);
+
+    for (var gi = 0; gi < chunk.resources.geometries.length; gi++) {
+      var g = chunk.resources.geometries[gi];
+      if (isSharedTemplateResource(g)) continue;
+      if (g && g.dispose) g.dispose();
+    }
+    for (var mi = 0; mi < chunk.resources.materials.length; mi++) {
+      var m = chunk.resources.materials[mi];
+      if (isSharedTemplateResource(m)) continue;
+      if (m && m.dispose) m.dispose();
+    }
+    for (var ti = 0; ti < chunk.resources.textures.length; ti++) {
+      var tx = chunk.resources.textures[ti];
+      if (isSharedTemplateResource(tx)) continue;
+      if (tx && tx.dispose) tx.dispose();
+    }
+  });
+
+  terrain.chunks.clear();
+  terrain.gcQueue = [];
+}
+
+// --- spawn helpers ---
 export function findWaterPosition(terrain, nearX, nearZ, minDist, maxDist) {
   if (!terrain) {
-    var angle = nextRandom() * Math.PI * 2;
-    var dist = minDist + nextRandom() * (maxDist - minDist);
-    return { x: nearX + Math.sin(angle) * dist, z: nearZ + Math.cos(angle) * dist };
+    var a = nextRandom() * Math.PI * 2;
+    var d = minDist + nextRandom() * (maxDist - minDist);
+    return { x: nearX + Math.sin(a) * d, z: nearZ + Math.cos(a) * d };
   }
-  // try random positions until we find water
+
   for (var attempt = 0; attempt < 50; attempt++) {
     var angle = nextRandom() * Math.PI * 2;
     var dist = minDist + nextRandom() * (maxDist - minDist);
@@ -327,47 +1313,40 @@ export function findWaterPosition(terrain, nearX, nearZ, minDist, maxDist) {
       return { x: x, z: z };
     }
   }
-  // fallback: return center (always water)
-  return { x: 0, z: 0 };
+
+  return { x: nearX, z: nearZ };
 }
 
-// --- public: get edge proximity factor (0 = safe, 1 = at hard limit) ---
+// --- boundary is intentionally disabled for infinite world ---
 export function getEdgeFactor(worldX, worldZ) {
-  var dist = Math.sqrt(worldX * worldX + worldZ * worldZ);
-  if (dist <= EDGE_FOG_START) return 0;
-  return Math.min(1, (dist - EDGE_FOG_START) / (EDGE_HARD_LIMIT - EDGE_FOG_START));
+  return 0;
 }
 
-// --- public: apply map edge push-back to a position ---
-// Returns { posX, posZ, pushed } — nudges entity toward center when near edge
 export function applyEdgeBoundary(posX, posZ) {
-  var dist = Math.sqrt(posX * posX + posZ * posZ);
-  if (dist <= EDGE_PUSH_START) return { posX: posX, posZ: posZ, pushed: false };
-
-  var factor = Math.min(1, (dist - EDGE_PUSH_START) / (EDGE_HARD_LIMIT - EDGE_PUSH_START));
-  factor = factor * factor;  // ease-in: gentle at first, strong near limit
-
-  // push toward center
-  var pushStrength = factor * 15;  // max push force
-  var nx = posX / dist;
-  var nz = posZ / dist;
-  var newX = posX - nx * pushStrength * 0.016;  // ~1 frame at 60fps
-  var newZ = posZ - nz * pushStrength * 0.016;
-
-  // hard clamp at absolute limit
-  var newDist = Math.sqrt(newX * newX + newZ * newZ);
-  if (newDist > EDGE_HARD_LIMIT) {
-    newX = newX / newDist * EDGE_HARD_LIMIT;
-    newZ = newZ / newDist * EDGE_HARD_LIMIT;
-  }
-
-  return { posX: newX, posZ: newZ, pushed: true };
+  return { posX: posX, posZ: posZ, pushed: false };
 }
 
 export function getTerrainMinimapMarkers(terrain) {
-  if (!terrain || !terrain.minimapMarkers) return [];
-  return terrain.minimapMarkers;
+  if (!terrain) return [];
+  var markers = [];
+  terrain.chunks.forEach(function (chunk) {
+    if (!chunk || chunk.state !== "active" || !chunk.minimapMarkers) return;
+    for (var i = 0; i < chunk.minimapMarkers.length; i++) {
+      markers.push(chunk.minimapMarkers[i]);
+    }
+  });
+  return markers;
 }
 
-export { _getTerrainAvoidance as getTerrainAvoidance };
-export { createColliderDebugOverlay, removeColliderDebugOverlay };
+// --- debug overlay helpers ---
+export function createColliderDebugOverlay(terrain, scene) {
+  if (!terrain) return;
+  var proxy = {
+    visualColliders: collectTerrainColliders(terrain)
+  };
+  return createCompositeColliderDebugOverlay(proxy, scene);
+}
+
+export function removeColliderDebugOverlay(scene) {
+  removeCompositeColliderDebugOverlay(scene);
+}

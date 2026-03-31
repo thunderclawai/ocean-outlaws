@@ -1,0 +1,21 @@
+{
+  "name": "ocean-outlaws",
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "rm -rf dist && vite build && cp -r game/assets game/data game/libs dist/",
+    "preview": "vite preview",
+    "smoke": "node scripts/smoke-real-game.mjs",
+    "smoke:stress": "node scripts/smoke-stress-gameplay.mjs",
+    "test": "npx playwright test"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.57.4",
+    "three": "^0.183.0"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.58.2",
+    "vite": "^7.3.1"
+  }
+}

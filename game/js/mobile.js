@@ -14,9 +14,18 @@ function detectMobile() {
 
 _isMobile = detectMobile();
 
+// Smarter auto-quality: factor in pixel ratio and GPU hints (folio-2025 pattern)
+function autoDetectQuality() {
+  if (!_isMobile) return "high";
+  var ratio = window.devicePixelRatio || 1;
+  if (ratio >= 3) return "low";
+  if (ratio >= 2) return "medium";
+  return "medium";
+}
+
 // auto-set quality on first load
 if (_isMobile) {
-  _quality = "medium";
+  _quality = autoDetectQuality();
 }
 
 // re-detect on resize (e.g. desktop user resizes small)
@@ -68,30 +77,31 @@ export function getQualityConfig() {
       antialias: false,
       shaderDetail: 0, // 0 = minimal
       maxTriangles: 3000,
-      maxCompositeInstances: 3
+      maxCompositeInstances: _isMobile ? 1 : 3
     };
   }
   if (_quality === "medium") {
     return {
       oceanSegments: 96,
-      rainCount: 2000,
-      splashCount: 100,
+      rainCount: _isMobile ? 1000 : 2000,
+      splashCount: _isMobile ? 50 : 100,
       terrainOctaves: 3,
-      pixelRatioCap: 1.5,
+      pixelRatioCap: _isMobile ? 1.0 : 1.5,
       antialias: false,
       shaderDetail: 1, // 1 = reduced
-      maxTriangles: 5000,
-      maxCompositeInstances: 5
+      maxTriangles: _isMobile ? 3000 : 5000,
+      maxCompositeInstances: _isMobile ? 2 : 5
     };
   }
-  // high
+  // high — disable AA on high-DPI screens (folio-2025: pixelRatio >= 2 already smooths)
+  var ratio = window.devicePixelRatio || 1;
   return {
     oceanSegments: 128,
     rainCount: 4000,
     splashCount: 200,
     terrainOctaves: 4,
     pixelRatioCap: 2,
-    antialias: true,
+    antialias: ratio < 2,
     shaderDetail: 2, // 2 = full
     maxTriangles: 0, // 0 = unlimited
     maxCompositeInstances: 7

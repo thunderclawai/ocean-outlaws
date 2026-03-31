@@ -31,6 +31,8 @@ var DROP_CHANCE_GOLD = 0.20;
 // --- shared geometry ---
 var crateGeo = null;
 var barrelGeo = null;
+var pickupMeshPool = {};
+var PICKUP_POOL_MAX_PER_TYPE = 24;
 
 function ensureGeo() {
   if (crateGeo) return;
@@ -66,27 +68,121 @@ var TYPE_COLORS = {
   ammo: 0xffaa22,
   fuel: 0x22aaff,
   parts: 0x44dd66,
-  gold: 0xffcc44
+  gold: 0xffcc44,
+  weapon_upgrade_cannon:    0xffd700,
+  weapon_upgrade_chainshot: 0xff4422,
+  weapon_upgrade_firebomb:  0x4488ff
 };
 
 var GLOW_COLORS = {
   ammo: 0xffdd66,
   fuel: 0x66ccff,
   parts: 0x88ff99,
-  gold: 0xffee88
+  gold: 0xffee88,
+  weapon_upgrade_cannon:    0xffe44d,
+  weapon_upgrade_chainshot: 0xff7755,
+  weapon_upgrade_firebomb:  0x77aaff
 };
 
 function pickPickupModel(type) {
   return pickRoleVariant("pickup." + type, PICKUP_MODEL_POOLS[type], nextRandom);
 }
 
+function normalizeRoleToken(value) {
+  if (value === null || value === undefined) return null;
+  var text = String(value).trim().toLowerCase();
+  if (!text) return null;
+  text = text.replace(/[^a-z0-9_\-]/g, "_");
+  return text || null;
+}
+
+function pickPickupModelWithContext(type, roleContext) {
+  var baseRole = "pickup." + type;
+  var zoneId = roleContext ? normalizeRoleToken(roleContext.zoneId || roleContext.id) : null;
+  var condition = roleContext ? normalizeRoleToken(roleContext.condition) : null;
+  var difficulty = roleContext ? normalizeRoleToken(roleContext.difficulty) : null;
+  var storyRegion = roleContext ? normalizeRoleToken(roleContext.storyRegion || roleContext.region) : null;
+  var encounterType = roleContext ? normalizeRoleToken(roleContext.encounterType || roleContext.nodeType) : null;
+  var candidates = [];
+  if (zoneId) candidates.push(baseRole + ".zone." + zoneId);
+  if (condition) candidates.push(baseRole + ".condition." + condition);
+  if (difficulty) candidates.push(baseRole + ".difficulty." + difficulty);
+  if (storyRegion) candidates.push(baseRole + ".storyregion." + storyRegion);
+  if (encounterType) candidates.push(baseRole + ".encounter." + encounterType);
+  for (var i = 0; i < candidates.length; i++) {
+    var contextual = pickRoleVariant(candidates[i], null, nextRandom);
+    if (contextual) return contextual;
+  }
+  return pickPickupModel(type);
+}
+
+function collectPickupFadeMaterials(mesh) {
+  var mats = [];
+  if (!mesh) return mats;
+  mesh.traverse(function (child) {
+    if (!child.isMesh || !child.material) return;
+    if (Array.isArray(child.material)) {
+      for (var i = 0; i < child.material.length; i++) {
+        var mat = child.material[i];
+        if (mat) mats.push(mat);
+      }
+      return;
+    }
+    mats.push(child.material);
+  });
+  return mats;
+}
+
+function getPickupPool(type) {
+  if (!pickupMeshPool[type]) pickupMeshPool[type] = [];
+  return pickupMeshPool[type];
+}
+
+function resetPickupMeshVisual(mesh) {
+  if (!mesh) return;
+  mesh.visible = true;
+  mesh.rotation.set(0, 0, 0);
+  mesh.scale.set(1, 1, 1);
+  while (mesh.children.length > 1) mesh.remove(mesh.children[mesh.children.length - 1]);
+
+  var fallback = mesh.userData.fallbackMesh;
+  if (fallback) fallback.visible = true;
+
+  var mats = mesh.userData.fadeMaterials || [];
+  for (var i = 0; i < mats.length; i++) {
+    var mat = mats[i];
+    if (!mat) continue;
+    mat.opacity = 1;
+    mat.transparent = false;
+  }
+}
+
+function acquirePickupMesh(type) {
+  var pool = getPickupPool(type);
+  if (pool.length > 0) {
+    var reused = pool.pop();
+    resetPickupMeshVisual(reused);
+    if (type && type.indexOf("weapon_upgrade_") === 0) {
+      reused.scale.setScalar(1.4);
+    }
+    return reused;
+  }
+  return buildPickupMesh(type);
+}
+
+function releasePickupMesh(type, mesh) {
+  if (!mesh) return;
+  var pool = getPickupPool(type);
+  if (pool.length >= PICKUP_POOL_MAX_PER_TYPE) return;
+  resetPickupMeshVisual(mesh);
+  pool.push(mesh);
+}
+
 // --- build pickup mesh ---
 function buildPickupMesh(type) {
   ensureGeo();
   var group = new THREE.Group();
-
-  var color = TYPE_COLORS[type] || 0xffffff;
-  var mat = new THREE.MeshToonMaterial({ color: color });
+  var mat = new THREE.MeshToonMaterial({ color: TYPE_COLORS[type] || 0xffffff });
 
   var mesh;
   if (type === "fuel") {
@@ -97,18 +193,19 @@ function buildPickupMesh(type) {
   mesh.userData.pickupFallback = true;
   group.add(mesh);
 
-  // glow point light
-  var glowColor = GLOW_COLORS[type] || 0xffffff;
-  var light = new THREE.PointLight(glowColor, 1.0, 6);
-  light.position.set(0, 0.5, 0);
-  group.add(light);
+  // weapon_upgrade pickups are larger to stand out
+  if (type && type.indexOf("weapon_upgrade_") === 0) {
+    group.scale.setScalar(1.4);
+  }
 
-  group.userData.light = light;
+  group.userData.pickupType = type;
+  group.userData.fallbackMesh = mesh;
+  group.userData.fadeMaterials = collectPickupFadeMaterials(group);
   return group;
 }
 
 function hydratePickupMesh(pickup) {
-  var model = pickPickupModel(pickup.type);
+  var model = pickPickupModelWithContext(pickup.type, pickup.roleContext);
   if (!model) return;
   loadGlbVisual(model.path, model.fit, true)
     .then(function (obj) {
@@ -120,6 +217,8 @@ function hydratePickupMesh(pickup) {
       });
       obj.position.y = 0.1;
       pickup.mesh.add(obj);
+      pickup.fadeMaterials = collectPickupFadeMaterials(pickup.mesh);
+      pickup.mesh.userData.fadeMaterials = pickup.fadeMaterials;
     })
     .catch(function () {
       // keep fallback mesh
@@ -131,12 +230,19 @@ export function createPickupManager() {
   ensureAssetRoles();
   return {
     pickups: [],
-    onCollectCallback: null  // called with (index) for multiplayer sync
+    roleContext: null,
+    onCollectCallback: null,   // called with (index) for multiplayer sync
+    onWeaponUpgrade: null      // called with (weaponKey) when weapon upgrade collected
   };
 }
 
 export function setPickupCollectCallback(manager, callback) {
   manager.onCollectCallback = callback;
+}
+
+export function setPickupRoleContext(manager, roleContext) {
+  if (!manager) return;
+  manager.roleContext = roleContext || null;
 }
 
 // --- spawn a pickup at position ---
@@ -153,7 +259,7 @@ export function spawnPickup(manager, x, y, z, scene) {
     type = "parts";
   }
 
-  var mesh = buildPickupMesh(type);
+  var mesh = acquirePickupMesh(type);
   mesh.position.set(x, y + PICKUP_FLOAT_OFFSET, z);
   scene.add(mesh);
 
@@ -162,18 +268,41 @@ export function spawnPickup(manager, x, y, z, scene) {
     type: type,
     posX: x,
     posZ: z,
+    roleContext: manager.roleContext || null,
+    fadeMaterials: mesh.userData.fadeMaterials || [],
     age: 0,
     collected: false
   };
   manager.pickups.push(pickup);
+}
 
-  hydratePickupMesh(pickup);
+// --- spawn a weapon upgrade pickup at position ---
+export function spawnWeaponUpgradePickup(manager, x, y, z, scene, weaponKey) {
+  var type = "weapon_upgrade_" + weaponKey;
+  var mesh = acquirePickupMesh(type);
+  mesh.position.set(x, y + PICKUP_FLOAT_OFFSET, z);
+  scene.add(mesh);
+  var pickup = {
+    mesh: mesh,
+    type: type,
+    weaponKey: weaponKey,
+    posX: x,
+    posZ: z,
+    roleContext: manager.roleContext || null,
+    fadeMaterials: mesh.userData.fadeMaterials || [],
+    age: 0,
+    collected: false,
+    onWeaponUpgrade: manager.onWeaponUpgrade
+  };
+  manager.pickups.push(pickup);
 }
 
 // --- clear all pickups (called on wave transition) ---
 export function clearPickups(manager, scene) {
   for (var i = 0; i < manager.pickups.length; i++) {
-    scene.remove(manager.pickups[i].mesh);
+    var p = manager.pickups[i];
+    scene.remove(p.mesh);
+    releasePickupMesh(p.type, p.mesh);
   }
   manager.pickups = [];
 }
@@ -186,9 +315,16 @@ export function updatePickups(manager, ship, resources, dt, elapsed, getWaveHeig
     var p = manager.pickups[i];
     p.age += dt;
 
+    if (p.collected) {
+      if (p.mesh && p.mesh.parent) scene.remove(p.mesh);
+      releasePickupMesh(p.type, p.mesh);
+      continue;
+    }
+
     // despawn old pickups
     if (p.age > PICKUP_LIFETIME) {
       scene.remove(p.mesh);
+      releasePickupMesh(p.type, p.mesh);
       continue;
     }
 
@@ -201,6 +337,7 @@ export function updatePickups(manager, ship, resources, dt, elapsed, getWaveHeig
       p.collected = true;
       collectPickup(p, resources, upgrades);
       scene.remove(p.mesh);
+      releasePickupMesh(p.type, p.mesh);
       // Broadcast pickup claim for multiplayer
       if (manager.onCollectCallback) manager.onCollectCallback(i);
       continue;
@@ -214,22 +351,16 @@ export function updatePickups(manager, ship, resources, dt, elapsed, getWaveHeig
     // spin
     p.mesh.rotation.y += PICKUP_SPIN_SPEED * dt;
 
-    // glow pulse
-    var light = p.mesh.userData.light;
-    if (light) {
-      var pulse = GLOW_PULSE_MIN + (1 - GLOW_PULSE_MIN) * (0.5 + 0.5 * Math.sin(elapsed * GLOW_PULSE_SPEED));
-      light.intensity = pulse;
-    }
-
     // fade out near end of life
     if (p.age > PICKUP_LIFETIME - 3) {
       var fade = (PICKUP_LIFETIME - p.age) / 3;
-      p.mesh.traverse(function (child) {
-        if (child.isMesh && child.material) {
-          child.material.transparent = true;
-          child.material.opacity = fade;
-        }
-      });
+      var fadeMats = p.fadeMaterials || [];
+      for (var mi = 0; mi < fadeMats.length; mi++) {
+        var mat = fadeMats[mi];
+        if (!mat) continue;
+        mat.transparent = true;
+        mat.opacity = fade;
+      }
     }
 
     alive.push(p);
@@ -248,6 +379,25 @@ function collectPickup(pickup, resources, upgrades) {
     addParts(resources, PARTS_DROP_AMOUNT);
   } else if (pickup.type === "gold" && upgrades) {
     addGold(upgrades, GOLD_DROP_AMOUNT);
+  } else if (pickup.type && pickup.type.indexOf("weapon_upgrade_") === 0 && pickup.weaponKey) {
+    if (pickup.onWeaponUpgrade) pickup.onWeaponUpgrade(pickup.weaponKey);
   }
   console.log("[PICKUP] Collected " + pickup.type);
+}
+
+// --- pre-warm GLB models to avoid shader compile stutter on first pickup ---
+export function preloadPickupModels(scene) {
+  var types = ["ammo", "fuel", "parts", "gold"];
+  for (var i = 0; i < types.length; i++) {
+    var models = PICKUP_MODEL_POOLS[types[i]];
+    for (var j = 0; j < models.length; j++) {
+      (function(model) {
+        loadGlbVisual(model.path, model.fit, true).then(function(obj) {
+          obj.position.set(99999, 0, 99999);
+          obj.visible = false;
+          scene.add(obj);
+        }).catch(function() {});
+      })(models[j]);
+    }
+  }
 }
